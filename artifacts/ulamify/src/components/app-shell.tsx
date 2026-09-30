@@ -38,11 +38,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="flex items-center justify-between px-3">
           <Link href="/" data-testid="link-brand" className="flex items-center gap-3">
             <span className="grid h-10 w-10 place-items-center rounded-xl bg-sidebar-primary font-display text-xl font-extrabold text-sidebar-primary-foreground">U</span>
-            <span><span className="block font-display text-xl font-extrabold tracking-tight">ulamify</span><span className="block text-[10px] font-semibold uppercase tracking-[.18em] text-sidebar-foreground/55">counter + ops</span></span>
+            <span><span className="block font-display text-xl font-extrabold tracking-tight">ulamify</span><span className="meta-label block text-[10px] font-semibold uppercase text-sidebar-foreground/55">counter + ops</span></span>
           </Link>
           <button data-testid="button-close-menu" onClick={() => setMobileOpen(false)} className="rounded-lg p-2 text-sidebar-foreground/65 hover:bg-sidebar-accent md:hidden"><X size={18} /></button>
         </div>
-        <div className="mt-9 px-3 text-[10px] font-bold uppercase tracking-[.2em] text-sidebar-foreground/45">Workspace</div>
+        <div className="meta-label mt-9 px-3 text-[10px] font-bold uppercase text-sidebar-foreground/45">Workspace</div>
         <nav className="mt-3 space-y-1">
           {navigation.map(({ href, label, icon: Icon }) => {
             const active = href === location;
@@ -62,7 +62,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       {mobileOpen && <button aria-label="Close navigation" data-testid="button-dismiss-menu" onClick={() => setMobileOpen(false)} className="fixed inset-0 z-20 bg-[#172039]/40 md:hidden" />}
       <main className="min-h-[100dvh] md:pl-[248px]">
         <header className="sticky top-0 z-10 flex h-[74px] items-center justify-between border-b border-border/70 bg-background/95 px-5 backdrop-blur md:px-9">
-          <div className="flex items-center gap-3"><button data-testid="button-open-menu" onClick={() => setMobileOpen(true)} className="rounded-lg border border-border bg-card p-2 md:hidden"><Menu size={18} /></button><div><p className="text-xs font-semibold uppercase tracking-[.16em] text-muted-foreground">Bayanihan Kitchen</p><h1 className="font-display text-xl font-bold tracking-tight">{current}</h1></div></div>
+          <div className="flex items-center gap-3"><button data-testid="button-open-menu" onClick={() => setMobileOpen(true)} className="rounded-lg border border-border bg-card p-2 md:hidden"><Menu size={18} /></button><div><p className="meta-label text-xs font-semibold uppercase text-muted-foreground">Bayanihan Kitchen</p><h1 className="font-display text-xl font-bold tracking-tight">{current}</h1></div></div>
           <div className="flex items-center gap-3"><ConnectionStatus /><div className="hidden h-9 w-9 place-items-center rounded-full bg-secondary font-display font-bold text-secondary-foreground sm:grid">MR</div></div>
         </header>
         <div className="mx-auto max-w-[1500px] p-5 md:p-9">{children}</div>

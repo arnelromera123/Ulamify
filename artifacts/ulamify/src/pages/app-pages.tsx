@@ -39,7 +39,7 @@ const dateLabel = (value: string) => new Date(value).toLocaleDateString('en-PH',
 
 function PageHeading({ eyebrow, title, detail, action }: { eyebrow: string; title: string; detail: string; action?: ReactNode }) {
   return <div className="mb-7 flex flex-col justify-between gap-4 md:flex-row md:items-end">
-    <div><p className="mb-2 text-[11px] font-bold uppercase tracking-[.19em] text-secondary">{eyebrow}</p><h2 className="font-display text-3xl font-extrabold tracking-[-.04em] md:text-4xl">{title}</h2><p className="mt-2 max-w-xl text-sm text-muted-foreground">{detail}</p></div>
+    <div className="min-w-0"><p className="eyebrow-label mb-2 text-[11px] font-bold uppercase text-secondary">{eyebrow}</p><h2 className="font-display max-w-[24ch] text-balance text-3xl font-extrabold leading-[.98] md:text-4xl">{title}</h2><p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">{detail}</p></div>
     {action}
   </div>;
 }
