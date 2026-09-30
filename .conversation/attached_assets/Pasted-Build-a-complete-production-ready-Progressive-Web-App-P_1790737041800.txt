@@ -1,0 +1,33 @@
+Build a complete, production-ready Progressive Web App (PWA) system named "Ulamify" (a smart POS & operations suite) tailored for modern local Filipino food service / karinderya operations. The application must feature an offline-first architecture, role-based access control, ultra-fast point-of-sale capabilities, and a responsive layout optimized for mobile/tablet cashiers and desktop managers.
+
+### 1. Technology Stack & Architecture
+- Frontend: React or Vue.js with Tailwind CSS for rapid, mobile-first styling and high-contrast UI elements.
+- PWA Configuration: Include a Service Worker, web manifest, and local caching.
+- Local Storage / Offline Sync: Use Dexie.js (IndexedDB wrapper) to store product catalogs locally and maintain an `offline_orders` queue table. Implement online/offline status listeners that automatically sync queued local transactions to the backend when connectivity is restored.
+- Database (PostgreSQL / Supabase Schema):
+  - roles: id, name ('owner', 'cashier', 'kitchen', 'purchaser'), description
+  - users: id (UUID), email, password_hash, full_name, role_id (foreign key), is_active
+  - products: id, name, category ('Ulam', 'Rice', 'Beverage', 'Add-on'), price, is_available (boolean toggle for sold-out status)
+  - orders: id, cashier_id, total_amount, payment_method ('Cash', 'GCash', 'Maya'), status ('completed', 'voided'), created_at
+  - order_items: id, order_id, product_id, quantity, unit_price
+  - inventory_logs / expenses: id, user_id, type ('batch_production', 'palengke_expense'), details (JSON), created_at
+
+### 2. User Roles & Permission Matrix (RBAC)
+- 👑 Owner / Admin: Full unrestricted access. Manages staff accounts, views financial analytics (daily sales, expenses, net profit), configures prices, and overrides void requests.
+- 💻 Cashier / Frontline: Operational access limited to POS, order processing, and shift management. Cannot delete completed sales or alter prices.
+- 🍳 Kitchen Staff: Can log daily batch production output (servings cooked) and trigger low-stock alerts.
+- 🛒 Purchaser: Can log daily market (*palengke*) expenses and raw material deliveries.
+
+### 3. Core Features & Screen Workflows
+- Cashier POS Screen:
+  - Split layout: A visual category grid on one side (Ulam, Rice, Beverages) and a live cart on the other. Include a prominent "+ Extra Rice" modifier button.
+  - Fast Checkout Modal: Large denomination buttons for cash (₱50, ₱100, ₱500, ₱1000) that auto-compute change, plus quick toggles for QR Ph (GCash/Maya).
+  - Shift Management: Prompt for a starting cash float on login and generate a Z-read / remittance report at shift close.
+- Offline Capability & Sync Banner:
+  - Display a clear status header indicator ("Online" vs "Offline Mode - X orders pending"). Ensure local transactions save seamlessly to IndexedDB and push to the server upon reconnection.
+- Hardware Integration Readiness:
+  - Include placeholder functions / UI hooks for Web Bluetooth API integration to support 58mm/80mm thermal receipt printers.
+
+### 4. UI/UX Design Guidelines
+- Ultra-lightweight and minimal interface requiring a maximum of 3 to 4 taps per transaction.
+- High-contrast text and buttons designed for readability under bright local lighting conditions or low-cost Android tablets.

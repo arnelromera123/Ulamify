@@ -1,6 +1,6 @@
-# [Project name]
+# Ulamify POS
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Ulamify is an offline-first POS and daily operations suite for Filipino karinderya teams.
 
 ## Run & Operate
 
@@ -22,15 +22,22 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/ulamify` — the responsive cashier, dashboard, kitchen, purchasing, and settings web app
+- `artifacts/api-server/src/routes/ulamify.ts` — menu, orders, dashboard, production, and expense routes
+- `lib/api-spec/openapi.yaml` — source of truth for the generated API client and Zod schemas
+- `lib/db/src/schema/ulamify.ts` — Drizzle schema for products, orders, order items, and operation logs
+- `artifacts/ulamify/src/hooks/use-offline-queue.ts` — IndexedDB-backed offline order queue
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- The root web artifact owns the cashier experience; the shared API server owns persistence and sync.
+- Offline orders are queued in IndexedDB and submitted through the same order endpoint after connectivity returns.
+- Product seed data is created lazily on the first catalog read so a fresh database is immediately usable.
+- Thermal printing is represented as a readiness hook in settings; the hardware integration can be added without changing checkout.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+The current build provides a fast high-contrast POS counter, Cash/GCash/Maya checkout, online/offline status, IndexedDB offline order sync, recent orders, an owner dashboard, kitchen batch logging, palengke expense logging, product availability toggles, printer readiness, and a PWA manifest/service worker.
 
 ## User preferences
 

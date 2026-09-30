@@ -1,0 +1,18 @@
+{
+  "name": "Ulamify POS",
+  "short_name": "Ulamify",
+  "description": "Offline-first POS and daily operations for Filipino food service teams.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f4ec",
+  "theme_color": "#ff9f1a",
+  "lang": "en-PH",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

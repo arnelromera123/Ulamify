@@ -1,0 +1,1 @@
+- [Ulamify offline queue](pwa-offline-queue.md) — Keep offline POS orders in IndexedDB and replay the normal order contract after reconnecting.
