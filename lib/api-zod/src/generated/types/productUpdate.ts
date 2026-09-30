@@ -5,9 +5,17 @@
  * Ulamify POS and operations API
  * OpenAPI spec version: 0.1.0
  */
+import type { ProductUpdateCategory } from './productUpdateCategory';
 
 export interface ProductUpdate {
+  /**
+     * @minLength 2
+     * @maxLength 80
+     */
+  name?: string;
+  category?: ProductUpdateCategory;
   /** @minimum 0 */
   price?: number;
   isAvailable?: boolean;
+  isArchived?: boolean;
 }

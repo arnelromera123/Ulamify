@@ -13,5 +13,8 @@ export interface Product {
   category: ProductCategory;
   price: number;
   isAvailable: boolean;
+  /** @minimum 0 */
+  stockCount: number;
+  isArchived: boolean;
   accent?: string;
 }

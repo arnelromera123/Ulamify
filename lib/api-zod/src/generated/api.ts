@@ -18,34 +18,214 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
+ * @summary Staff PIN login
+ */
+export const LoginBody = zod.object({
+  "pin": zod.string()
+})
+
+export const LoginResponse = zod.object({
+  "user": zod.object({
+  "id": zod.number().int(),
+  "name": zod.string(),
+  "role": zod.string(),
+  "roleName": zod.string(),
+  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices'])),
+  "isActive": zod.boolean(),
+  "createdAt": zod.string()
+})
+})
+
+
+/**
+ * @summary List all staff accounts
+ */
+export const ListUsersResponseItem = zod.object({
+  "id": zod.number().int(),
+  "name": zod.string(),
+  "role": zod.string(),
+  "roleName": zod.string(),
+  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices'])),
+  "isActive": zod.boolean(),
+  "createdAt": zod.string()
+})
+export const ListUsersResponse = zod.array(ListUsersResponseItem)
+
+
+/**
+ * @summary Create a new staff account
+ */
+export const createUserBodyPinMin = 4;
+export const createUserBodyPinMax = 6;
+
+
+
+export const CreateUserBody = zod.object({
+  "name": zod.string(),
+  "pin": zod.string().min(createUserBodyPinMin).max(createUserBodyPinMax),
+  "role": zod.string()
+})
+
+export const CreateUserResponse = zod.object({
+  "id": zod.number().int(),
+  "name": zod.string(),
+  "role": zod.string(),
+  "roleName": zod.string(),
+  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices'])),
+  "isActive": zod.boolean(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary List staff roles and permissions
+ */
+
+
+
+export const ListRolesResponseItem = zod.object({
+  "code": zod.string(),
+  "name": zod.string(),
+  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices'])).min(1),
+  "isSystem": zod.boolean()
+})
+export const ListRolesResponse = zod.array(ListRolesResponseItem)
+
+
+/**
+ * @summary Create a staff role
+ */
+export const createRoleBodyNameMin = 2;
+export const createRoleBodyNameMax = 40;
+
+
+
+
+export const CreateRoleBody = zod.object({
+  "name": zod.string().min(createRoleBodyNameMin).max(createRoleBodyNameMax),
+  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices'])).min(1)
+})
+
+
+
+
+export const CreateRoleResponse = zod.object({
+  "code": zod.string(),
+  "name": zod.string(),
+  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices'])).min(1),
+  "isSystem": zod.boolean()
+})
+
+
+/**
+ * @summary Update staff account or PIN
+ */
+export const UpdateUserParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const updateUserBodyPinMin = 4;
+export const updateUserBodyPinMax = 6;
+
+
+
+export const UpdateUserBody = zod.object({
+  "name": zod.string().optional(),
+  "pin": zod.string().min(updateUserBodyPinMin).max(updateUserBodyPinMax).optional(),
+  "role": zod.string().optional(),
+  "isActive": zod.boolean().optional()
+})
+
+export const UpdateUserResponse = zod.object({
+  "id": zod.number().int(),
+  "name": zod.string(),
+  "role": zod.string(),
+  "roleName": zod.string(),
+  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices'])),
+  "isActive": zod.boolean(),
+  "createdAt": zod.string()
+})
+
+
+/**
  * @summary List menu products
  */
+export const listProductsResponseStockCountMin = 0;
+
+
+
 export const ListProductsResponseItem = zod.object({
   "id": zod.number().int(),
   "name": zod.string(),
   "category": zod.enum(['Ulam', 'Rice', 'Beverage', 'Add-on']),
   "price": zod.number(),
   "isAvailable": zod.boolean(),
+  "stockCount": zod.number().int().min(listProductsResponseStockCountMin),
+  "isArchived": zod.boolean(),
   "accent": zod.string().optional()
 })
 export const ListProductsResponse = zod.array(ListProductsResponseItem)
 
 
 /**
- * @summary Update product availability or price
+ * @summary Add a product to the menu
+ */
+export const createProductBodyNameMin = 2;
+export const createProductBodyNameMax = 80;
+
+export const createProductBodyPriceExclusiveMin = 0;
+
+
+
+export const CreateProductBody = zod.object({
+  "name": zod.string().min(createProductBodyNameMin).max(createProductBodyNameMax),
+  "category": zod.enum(['Ulam', 'Rice', 'Beverage', 'Add-on']),
+  "price": zod.number().gt(createProductBodyPriceExclusiveMin),
+  "isAvailable": zod.boolean().optional(),
+  "accent": zod.string().optional()
+})
+
+export const createProductResponseStockCountMin = 0;
+
+
+
+export const CreateProductResponse = zod.object({
+  "id": zod.number().int(),
+  "name": zod.string(),
+  "category": zod.enum(['Ulam', 'Rice', 'Beverage', 'Add-on']),
+  "price": zod.number(),
+  "isAvailable": zod.boolean(),
+  "stockCount": zod.number().int().min(createProductResponseStockCountMin),
+  "isArchived": zod.boolean(),
+  "accent": zod.string().optional()
+})
+
+
+/**
+ * @summary Update menu product details
  */
 export const UpdateProductParams = zod.object({
   "id": zod.coerce.number().int()
 })
+
+export const updateProductBodyNameMin = 2;
+export const updateProductBodyNameMax = 80;
 
 export const updateProductBodyPriceMin = 0;
 
 
 
 export const UpdateProductBody = zod.object({
+  "name": zod.string().min(updateProductBodyNameMin).max(updateProductBodyNameMax).optional(),
+  "category": zod.enum(['Ulam', 'Rice', 'Beverage', 'Add-on']).optional(),
   "price": zod.number().min(updateProductBodyPriceMin).optional(),
-  "isAvailable": zod.boolean().optional()
+  "isAvailable": zod.boolean().optional(),
+  "isArchived": zod.boolean().optional()
 })
+
+export const updateProductResponseStockCountMin = 0;
+
+
 
 export const UpdateProductResponse = zod.object({
   "id": zod.number().int(),
@@ -53,6 +233,31 @@ export const UpdateProductResponse = zod.object({
   "category": zod.enum(['Ulam', 'Rice', 'Beverage', 'Add-on']),
   "price": zod.number(),
   "isAvailable": zod.boolean(),
+  "stockCount": zod.number().int().min(updateProductResponseStockCountMin),
+  "isArchived": zod.boolean(),
+  "accent": zod.string().optional()
+})
+
+
+/**
+ * @summary Archive a product without deleting order history
+ */
+export const ArchiveProductParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const archiveProductResponseStockCountMin = 0;
+
+
+
+export const ArchiveProductResponse = zod.object({
+  "id": zod.number().int(),
+  "name": zod.string(),
+  "category": zod.enum(['Ulam', 'Rice', 'Beverage', 'Add-on']),
+  "price": zod.number(),
+  "isAvailable": zod.boolean(),
+  "stockCount": zod.number().int().min(archiveProductResponseStockCountMin),
+  "isArchived": zod.boolean(),
   "accent": zod.string().optional()
 })
 
@@ -127,6 +332,70 @@ export const ListOrdersResponse = zod.array(ListOrdersResponseItem)
 
 
 /**
+ * @summary Submit a void request for an order
+ */
+export const CreateVoidRequestParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const CreateVoidRequestBody = zod.object({
+  "reason": zod.string(),
+  "requestedByUserId": zod.number().int().nullish()
+})
+
+export const CreateVoidRequestResponse = zod.object({
+  "id": zod.number().int(),
+  "orderId": zod.number().int(),
+  "reason": zod.string(),
+  "status": zod.enum(['pending', 'approved', 'rejected']),
+  "requestedByName": zod.string().nullish(),
+  "stockRestocked": zod.boolean(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary List pending void requests
+ */
+export const ListVoidRequestsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "orderId": zod.number().int(),
+  "reason": zod.string(),
+  "status": zod.enum(['pending', 'approved', 'rejected']),
+  "requestedByName": zod.string().nullish(),
+  "stockRestocked": zod.boolean(),
+  "createdAt": zod.string()
+})
+export const ListVoidRequestsResponse = zod.array(ListVoidRequestsResponseItem)
+
+
+/**
+ * @summary Approve or reject a void request
+ */
+export const ApproveVoidRequestParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const approveVoidRequestBodyRestockReusableItemsDefault = false;
+
+export const ApproveVoidRequestBody = zod.object({
+  "approved": zod.boolean(),
+  "restockReusableItems": zod.boolean().default(approveVoidRequestBodyRestockReusableItemsDefault),
+  "approvedByUserId": zod.number().int().nullish()
+})
+
+export const ApproveVoidRequestResponse = zod.object({
+  "id": zod.number().int(),
+  "orderId": zod.number().int(),
+  "reason": zod.string(),
+  "status": zod.enum(['pending', 'approved', 'rejected']),
+  "requestedByName": zod.string().nullish(),
+  "stockRestocked": zod.boolean(),
+  "createdAt": zod.string()
+})
+
+
+/**
  * @summary Get today's operations summary
  */
 export const GetDashboardSummaryResponse = zod.object({
@@ -137,6 +406,35 @@ export const GetDashboardSummaryResponse = zod.object({
   "lowStockCount": zod.number().int(),
   "expenseTotal": zod.number(),
   "topProduct": zod.string().nullish()
+})
+
+
+/**
+ * @summary Get the store profile
+ */
+export const GetStoreProfileResponse = zod.object({
+  "name": zod.string(),
+  "location": zod.string()
+})
+
+
+/**
+ * @summary Update the store name and location
+ */
+export const updateStoreProfileBodyNameMax = 100;
+
+export const updateStoreProfileBodyLocationMax = 100;
+
+
+
+export const UpdateStoreProfileBody = zod.object({
+  "name": zod.string().min(1).max(updateStoreProfileBodyNameMax),
+  "location": zod.string().min(1).max(updateStoreProfileBodyLocationMax)
+})
+
+export const UpdateStoreProfileResponse = zod.object({
+  "name": zod.string(),
+  "location": zod.string()
 })
 
 

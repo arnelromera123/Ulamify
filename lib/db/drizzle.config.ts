@@ -2,7 +2,13 @@ import { defineConfig } from "drizzle-kit";
 import path from "path";
 
 if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL, ensure the database is provisioned");
+  try {
+    process.loadEnvFile(path.join(__dirname, "../../.env"));
+  } catch {}
+}
+
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL is missing. Please create a .env file in the root folder or set DATABASE_URL in your terminal.");
 }
 
 export default defineConfig({

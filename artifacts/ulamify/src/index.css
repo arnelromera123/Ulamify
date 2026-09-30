@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,400;0,500;1,400&family=DM+Sans:ital,opsz,wght@0,9..40,400..800;1,9..40,400..800&family=Plus+Jakarta+Sans:ital,wght@0,600..800;1,600..800&display=swap');
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @plugin "@tailwindcss/typography";
@@ -63,8 +63,8 @@
   --destructive-foreground: 42 37% 99%;
   --input: 42 23% 78%;
   --ring: 35 96% 53%;
-  --app-font-sans: 'DM Sans', sans-serif;
-  --app-font-serif: 'Syne', sans-serif;
+  --app-font-sans: 'DM Sans', system-ui, sans-serif;
+  --app-font-serif: 'Plus Jakarta Sans', 'DM Sans', system-ui, sans-serif;
   --app-font-mono: 'DM Mono', monospace;
   --radius: 0.75rem;
   --spacing: 0.25rem;
@@ -101,23 +101,31 @@
 }
 
 @layer base {
-  * { @apply border-border; }
+  * {
+    @apply border-border;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  *::-webkit-scrollbar { display: none; }
   body { @apply font-sans antialiased bg-background text-foreground; min-width: 320px; }
   button, input, select, textarea { font: inherit; }
   button { cursor: pointer; }
+  label, legend { text-transform: uppercase; letter-spacing: 0.06em; }
 }
 .font-display {
   font-family: var(--app-font-serif);
   font-stretch: normal;
-  letter-spacing: -0.025em;
+  letter-spacing: -0.02em;
   text-wrap: balance;
 }
 .font-mono-ui { font-family: var(--app-font-mono); }
 .eyebrow-label {
+  text-transform: uppercase;
   letter-spacing: 0.11em;
   line-height: 1.2;
 }
 .meta-label {
+  text-transform: uppercase;
   letter-spacing: 0.09em;
   line-height: 1.25;
 }

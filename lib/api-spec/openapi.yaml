@@ -1,6 +1,5 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
   description: Ulamify POS and operations API
@@ -10,6 +9,10 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication operations
+  - name: users
+    description: Staff account operations
   - name: products
     description: Menu catalog operations
   - name: orders
@@ -18,6 +21,8 @@ tags:
     description: Kitchen and purchasing operations
   - name: dashboard
     description: Owner dashboard summaries
+  - name: store
+    description: Store profile settings
 paths:
   /healthz:
     get:
@@ -32,6 +37,116 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Staff PIN login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResult"
+        "401":
+          description: Invalid PIN
+  /users:
+    get:
+      operationId: listUsers
+      tags: [users]
+      summary: List all staff accounts
+      responses:
+        "200":
+          description: Staff list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+    post:
+      operationId: createUser
+      tags: [users]
+      summary: Create a new staff account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserInput"
+      responses:
+        "201":
+          description: Created user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+  /roles:
+    get:
+      operationId: listRoles
+      tags: [users]
+      summary: List staff roles and permissions
+      responses:
+        "200":
+          description: Staff roles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Role"
+    post:
+      operationId: createRole
+      tags: [users]
+      summary: Create a staff role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoleInput"
+      responses:
+        "201":
+          description: Created staff role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Role"
+        "409":
+          description: A role with that name already exists
+  /users/{id}:
+    patch:
+      operationId: updateUser
+      tags: [users]
+      summary: Update staff account or PIN
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdate"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          description: User not found
   /products:
     get:
       operationId: listProducts
@@ -46,11 +161,28 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Product"
+    post:
+      operationId: createProduct
+      tags: [products]
+      summary: Add a product to the menu
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductInput"
+      responses:
+        "201":
+          description: Created menu product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
   /products/{id}:
     patch:
       operationId: updateProduct
       tags: [products]
-      summary: Update product availability or price
+      summary: Update menu product details
       parameters:
         - name: id
           in: path
@@ -66,6 +198,25 @@ paths:
       responses:
         "200":
           description: Updated product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "404":
+          description: Product not found
+    delete:
+      operationId: archiveProduct
+      tags: [products]
+      summary: Archive a product without deleting order history
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Archived product
           content:
             application/json:
               schema:
@@ -90,6 +241,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Order"
+        "200":
+          description: Previously accepted offline order returned for an idempotent retry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "409":
+          description: Insufficient stock to complete the order
     get:
       operationId: listOrders
       tags: [orders]
@@ -112,6 +271,70 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Order"
+  /orders/{id}/void-request:
+    post:
+      operationId: createVoidRequest
+      tags: [orders]
+      summary: Submit a void request for an order
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoidRequestInput"
+      responses:
+        "201":
+          description: Created void request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoidRequest"
+  /void-requests:
+    get:
+      operationId: listVoidRequests
+      tags: [orders]
+      summary: List pending void requests
+      responses:
+        "200":
+          description: List of void requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VoidRequest"
+  /void-requests/{id}/approve:
+    post:
+      operationId: approveVoidRequest
+      tags: [orders]
+      summary: Approve or reject a void request
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApproveVoidInput"
+      responses:
+        "200":
+          description: Void request processed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoidRequest"
+        "409":
+          description: Void request was already processed or its order cannot be voided
   /dashboard/summary:
     get:
       operationId: getDashboardSummary
@@ -124,6 +347,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DashboardSummary"
+  /store-profile:
+    get:
+      operationId: getStoreProfile
+      tags: [store]
+      summary: Get the store profile
+      responses:
+        "200":
+          description: Current store profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoreProfile"
+    put:
+      operationId: updateStoreProfile
+      tags: [store]
+      summary: Update the store name and location
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StoreProfileInput"
+      responses:
+        "200":
+          description: Updated store profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoreProfile"
   /operations/production:
     post:
       operationId: createProductionLog
@@ -169,9 +421,137 @@ components:
           type: string
       required:
         - status
+    UserRole:
+      type: string
+    RolePermission:
+      type: string
+      enum: [counter, dashboard, orders, kitchen, purchasing, settings, manage-staff, configure-prices]
+    Role:
+      type: object
+      required: [code, name, permissions, isSystem]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        permissions:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/RolePermission"
+        isSystem:
+          type: boolean
+    User:
+      type: object
+      required: [id, name, role, roleName, permissions, isActive, createdAt]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        role:
+          $ref: "#/components/schemas/UserRole"
+        roleName:
+          type: string
+        permissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/RolePermission"
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+    UserInput:
+      type: object
+      required: [name, pin, role]
+      properties:
+        name:
+          type: string
+        pin:
+          type: string
+          minLength: 4
+          maxLength: 6
+        role:
+          $ref: "#/components/schemas/UserRole"
+    RoleInput:
+      type: object
+      required: [name, permissions]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 40
+        permissions:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/RolePermission"
+    UserUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        pin:
+          type: string
+          minLength: 4
+          maxLength: 6
+        role:
+          $ref: "#/components/schemas/UserRole"
+        isActive:
+          type: boolean
+    LoginInput:
+      type: object
+      required: [pin]
+      properties:
+        pin:
+          type: string
+    LoginResult:
+      type: object
+      required: [user]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+    VoidRequestInput:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+        requestedByUserId:
+          type: ["integer", "null"]
+    ApproveVoidInput:
+      type: object
+      required: [approved]
+      properties:
+        approved:
+          type: boolean
+        restockReusableItems:
+          type: boolean
+          default: false
+        approvedByUserId:
+          type: ["integer", "null"]
+    VoidRequest:
+      type: object
+      required: [id, orderId, reason, status, stockRestocked, createdAt]
+      properties:
+        id:
+          type: integer
+        orderId:
+          type: integer
+        reason:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+        requestedByName:
+          type: ["string", "null"]
+        stockRestocked:
+          type: boolean
+        createdAt:
+          type: string
     Product:
       type: object
-      required: [id, name, category, price, isAvailable]
+      required: [id, name, category, price, isAvailable, stockCount, isArchived]
       properties:
         id:
           type: integer
@@ -184,15 +564,47 @@ components:
           type: number
         isAvailable:
           type: boolean
+        stockCount:
+          type: integer
+          minimum: 0
+        isArchived:
+          type: boolean
+        accent:
+          type: string
+    ProductInput:
+      type: object
+      required: [name, category, price]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 80
+        category:
+          type: string
+          enum: [Ulam, Rice, Beverage, Add-on]
+        price:
+          type: number
+          exclusiveMinimum: 0
+        isAvailable:
+          type: boolean
         accent:
           type: string
     ProductUpdate:
       type: object
       properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 80
+        category:
+          type: string
+          enum: [Ulam, Rice, Beverage, Add-on]
         price:
           type: number
           minimum: 0
         isAvailable:
+          type: boolean
+        isArchived:
           type: boolean
     OrderItemInput:
       type: object
@@ -278,6 +690,26 @@ components:
           type: number
         topProduct:
           type: ["string", "null"]
+    StoreProfile:
+      type: object
+      required: [name, location]
+      properties:
+        name:
+          type: string
+        location:
+          type: string
+    StoreProfileInput:
+      type: object
+      required: [name, location]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        location:
+          type: string
+          minLength: 1
+          maxLength: 100
     ProductionLogInput:
       type: object
       required: [productId, servings]
@@ -316,4 +748,3 @@ components:
           type: number
         createdAt:
           type: string
-

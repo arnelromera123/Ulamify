@@ -9,6 +9,112 @@ export interface HealthStatus {
   status: string;
 }
 
+export type UserRole = string;
+
+export type RolePermission = typeof RolePermission[keyof typeof RolePermission];
+
+
+export const RolePermission = {
+  counter: 'counter',
+  dashboard: 'dashboard',
+  orders: 'orders',
+  kitchen: 'kitchen',
+  purchasing: 'purchasing',
+  settings: 'settings',
+  'manage-staff': 'manage-staff',
+  'configure-prices': 'configure-prices',
+} as const;
+
+export interface Role {
+  code: string;
+  name: string;
+  /** @minItems 1 */
+  permissions: RolePermission[];
+  isSystem: boolean;
+}
+
+export interface User {
+  id: number;
+  name: string;
+  role: UserRole;
+  roleName: string;
+  permissions: RolePermission[];
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface UserInput {
+  name: string;
+  /**
+     * @minLength 4
+     * @maxLength 6
+     */
+  pin: string;
+  role: UserRole;
+}
+
+export interface RoleInput {
+  /**
+     * @minLength 2
+     * @maxLength 40
+     */
+  name: string;
+  /** @minItems 1 */
+  permissions: RolePermission[];
+}
+
+export interface UserUpdate {
+  name?: string;
+  /**
+     * @minLength 4
+     * @maxLength 6
+     */
+  pin?: string;
+  role?: UserRole;
+  isActive?: boolean;
+}
+
+export interface LoginInput {
+  pin: string;
+}
+
+export interface LoginResult {
+  user: User;
+}
+
+export interface VoidRequestInput {
+  reason: string;
+  /** @nullable */
+  requestedByUserId?: number | null;
+}
+
+export interface ApproveVoidInput {
+  approved: boolean;
+  restockReusableItems?: boolean;
+  /** @nullable */
+  approvedByUserId?: number | null;
+}
+
+export type VoidRequestStatus = typeof VoidRequestStatus[keyof typeof VoidRequestStatus];
+
+
+export const VoidRequestStatus = {
+  pending: 'pending',
+  approved: 'approved',
+  rejected: 'rejected',
+} as const;
+
+export interface VoidRequest {
+  id: number;
+  orderId: number;
+  reason: string;
+  status: VoidRequestStatus;
+  /** @nullable */
+  requestedByName?: string | null;
+  stockRestocked: boolean;
+  createdAt: string;
+}
+
 export type ProductCategory = typeof ProductCategory[keyof typeof ProductCategory];
 
 
@@ -25,13 +131,56 @@ export interface Product {
   category: ProductCategory;
   price: number;
   isAvailable: boolean;
+  /** @minimum 0 */
+  stockCount: number;
+  isArchived: boolean;
   accent?: string;
 }
 
+export type ProductInputCategory = typeof ProductInputCategory[keyof typeof ProductInputCategory];
+
+
+export const ProductInputCategory = {
+  Ulam: 'Ulam',
+  Rice: 'Rice',
+  Beverage: 'Beverage',
+  'Add-on': 'Add-on',
+} as const;
+
+export interface ProductInput {
+  /**
+     * @minLength 2
+     * @maxLength 80
+     */
+  name: string;
+  category: ProductInputCategory;
+  /** @exclusiveMinimum 0 */
+  price: number;
+  isAvailable?: boolean;
+  accent?: string;
+}
+
+export type ProductUpdateCategory = typeof ProductUpdateCategory[keyof typeof ProductUpdateCategory];
+
+
+export const ProductUpdateCategory = {
+  Ulam: 'Ulam',
+  Rice: 'Rice',
+  Beverage: 'Beverage',
+  'Add-on': 'Add-on',
+} as const;
+
 export interface ProductUpdate {
+  /**
+     * @minLength 2
+     * @maxLength 80
+     */
+  name?: string;
+  category?: ProductUpdateCategory;
   /** @minimum 0 */
   price?: number;
   isAvailable?: boolean;
+  isArchived?: boolean;
 }
 
 export interface OrderItemInput {
@@ -108,6 +257,24 @@ export interface DashboardSummary {
   expenseTotal: number;
   /** @nullable */
   topProduct?: string | null;
+}
+
+export interface StoreProfile {
+  name: string;
+  location: string;
+}
+
+export interface StoreProfileInput {
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name: string;
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  location: string;
 }
 
 export interface ProductionLogInput {

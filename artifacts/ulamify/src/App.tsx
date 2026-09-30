@@ -4,7 +4,9 @@ import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { AppShell } from '@/components/app-shell';
-import { DashboardPage, KitchenPage, OrdersPage, PosPage, PurchasingPage, SettingsPage } from '@/pages/app-pages';
+import { PinLoginModal } from '@/components/pin-login-modal';
+import { AuthProvider } from '@/context/auth-context';
+import { DashboardPage, KitchenPage, MenuManagementPage, OrdersPage, PosPage, PurchasingPage, RolesPage, SettingsPage, UsersPage } from '@/pages/app-pages';
 import NotFound from '@/pages/not-found';
 import {
   Route,
@@ -17,8 +19,6 @@ const queryClient = new QueryClient();
 
 function Router() {
   return (
-    // Keep a shared shell (sidebar, navbar) outside the boundary so it
-    // survives a page crash.
     <RoutedErrorBoundary>
       <AppShell>
         <Switch>
@@ -26,7 +26,10 @@ function Router() {
           <Route path="/dashboard" component={DashboardPage} />
           <Route path="/orders" component={OrdersPage} />
           <Route path="/kitchen" component={KitchenPage} />
+          <Route path="/menu" component={MenuManagementPage} />
           <Route path="/purchasing" component={PurchasingPage} />
+          <Route path="/roles" component={RolesPage} />
+          <Route path="/users" component={UsersPage} />
           <Route path="/settings" component={SettingsPage} />
           <Route component={NotFound} />
         </Switch>
@@ -43,12 +46,15 @@ function RoutedErrorBoundary({ children }: { children: ReactNode }) {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-          <Router />
-        </WouterRouter>
-        <Toaster />
-      </TooltipProvider>
+      <AuthProvider>
+        <TooltipProvider>
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+            <Router />
+          </WouterRouter>
+          <PinLoginModal />
+          <Toaster />
+        </TooltipProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }
