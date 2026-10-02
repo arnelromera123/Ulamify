@@ -395,6 +395,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/OperationLog"
   /operations/expenses:
+    get:
+      operationId: listExpenseLogs
+      tags: [operations]
+      summary: List recent palengke expenses
+      responses:
+        "200":
+          description: Recent expense logs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OperationLog"
     post:
       operationId: createExpenseLog
       tags: [operations]

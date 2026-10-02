@@ -460,6 +460,19 @@ export const CreateProductionLogResponse = zod.object({
 
 
 /**
+ * @summary List recent palengke expenses
+ */
+export const ListExpenseLogsResponseItem = zod.object({
+  "id": zod.string(),
+  "type": zod.enum(['batch_production', 'palengke_expense']),
+  "details": zod.string(),
+  "amount": zod.number(),
+  "createdAt": zod.string()
+})
+export const ListExpenseLogsResponse = zod.array(ListExpenseLogsResponseItem)
+
+
+/**
  * @summary Log a palengke expense
  */
 export const createExpenseLogBodyAmountMin = 0;

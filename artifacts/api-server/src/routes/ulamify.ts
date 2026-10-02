@@ -24,6 +24,7 @@ import {
   ListOrdersQueryParams,
   ListOrdersResponse,
   ListProductsResponse,
+  ListExpenseLogsResponse,
   ListRolesResponse,
   ListUsersResponse,
   ListVoidRequestsResponse,
@@ -839,6 +840,26 @@ router.post("/operations/production", async (req, res): Promise<void> => {
       amount: money(created.amount),
       createdAt: created.createdAt.toISOString(),
     }),
+  );
+});
+
+router.get("/operations/expenses", async (_req, res): Promise<void> => {
+  const logs = await db
+    .select()
+    .from(operationLogsTable)
+    .where(eq(operationLogsTable.type, "palengke_expense"))
+    .orderBy(desc(operationLogsTable.createdAt))
+    .limit(100);
+  res.json(
+    ListExpenseLogsResponse.parse(
+      logs.map((log) => ({
+        id: String(log.id),
+        type: log.type,
+        details: log.details,
+        amount: money(log.amount),
+        createdAt: log.createdAt.toISOString(),
+      })),
+    ),
   );
 });
 

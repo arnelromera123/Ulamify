@@ -8,6 +8,13 @@
       "when": 1790758733670,
       "tag": "0000_grey_dragon_lord",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790928761321,
+      "tag": "0001_stiff_vulcan",
+      "breakpoints": true
     }
   ]
 }

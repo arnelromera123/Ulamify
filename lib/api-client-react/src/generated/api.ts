@@ -1742,6 +1742,83 @@ export const useCreateProductionLog = <TError = ErrorType<unknown>,
       return useMutation(getCreateProductionLogMutationOptions(options));
     }
 
+export const getListExpenseLogsUrl = () => {
+
+
+
+
+  return `/api/operations/expenses`
+}
+
+/**
+ * @summary List recent palengke expenses
+ */
+export const listExpenseLogs = async ( options?: Parameters<typeof customFetch>[1]): Promise<OperationLog[]> => {
+
+  return customFetch<OperationLog[]>(getListExpenseLogsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListExpenseLogsQueryKey = () => {
+    return [
+    `/api/operations/expenses`
+    ] as const;
+    }
+
+
+export const getListExpenseLogsQueryOptions = <TData = Awaited<ReturnType<typeof listExpenseLogs>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listExpenseLogs>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListExpenseLogsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listExpenseLogs>>> = ({ signal }) => listExpenseLogs({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listExpenseLogs>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListExpenseLogsQueryResult = NonNullable<Awaited<ReturnType<typeof listExpenseLogs>>>
+export type ListExpenseLogsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List recent palengke expenses
+ */
+
+export function useListExpenseLogs<TData = Awaited<ReturnType<typeof listExpenseLogs>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listExpenseLogs>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListExpenseLogsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getCreateExpenseLogUrl = () => {
 
 
