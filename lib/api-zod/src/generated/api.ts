@@ -30,11 +30,33 @@ export const LoginResponse = zod.object({
   "name": zod.string(),
   "role": zod.string(),
   "roleName": zod.string(),
-  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices'])),
+  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices', 'costing'])),
   "isActive": zod.boolean(),
   "createdAt": zod.string()
 })
 })
+
+
+/**
+ * @summary Restore the current staff session
+ */
+export const GetAuthSessionResponse = zod.object({
+  "user": zod.object({
+  "id": zod.number().int(),
+  "name": zod.string(),
+  "role": zod.string(),
+  "roleName": zod.string(),
+  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices', 'costing'])),
+  "isActive": zod.boolean(),
+  "createdAt": zod.string()
+})
+})
+
+
+/**
+ * @summary Revoke the current staff session
+ */
+export const LogoutResponse = zod.void()
 
 
 /**
@@ -45,7 +67,7 @@ export const ListUsersResponseItem = zod.object({
   "name": zod.string(),
   "role": zod.string(),
   "roleName": zod.string(),
-  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices'])),
+  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices', 'costing'])),
   "isActive": zod.boolean(),
   "createdAt": zod.string()
 })
@@ -71,7 +93,7 @@ export const CreateUserResponse = zod.object({
   "name": zod.string(),
   "role": zod.string(),
   "roleName": zod.string(),
-  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices'])),
+  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices', 'costing'])),
   "isActive": zod.boolean(),
   "createdAt": zod.string()
 })
@@ -86,7 +108,7 @@ export const CreateUserResponse = zod.object({
 export const ListRolesResponseItem = zod.object({
   "code": zod.string(),
   "name": zod.string(),
-  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices'])).min(1),
+  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices', 'costing'])).min(1),
   "isSystem": zod.boolean()
 })
 export const ListRolesResponse = zod.array(ListRolesResponseItem)
@@ -103,7 +125,7 @@ export const createRoleBodyNameMax = 40;
 
 export const CreateRoleBody = zod.object({
   "name": zod.string().min(createRoleBodyNameMin).max(createRoleBodyNameMax),
-  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices'])).min(1)
+  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices', 'costing'])).min(1)
 })
 
 
@@ -112,7 +134,7 @@ export const CreateRoleBody = zod.object({
 export const CreateRoleResponse = zod.object({
   "code": zod.string(),
   "name": zod.string(),
-  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices'])).min(1),
+  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices', 'costing'])).min(1),
   "isSystem": zod.boolean()
 })
 
@@ -141,7 +163,7 @@ export const UpdateUserResponse = zod.object({
   "name": zod.string(),
   "role": zod.string(),
   "roleName": zod.string(),
-  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices'])),
+  "permissions": zod.array(zod.enum(['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices', 'costing'])),
   "isActive": zod.boolean(),
   "createdAt": zod.string()
 })
@@ -455,7 +477,10 @@ export const CreateProductionLogResponse = zod.object({
   "type": zod.enum(['batch_production', 'palengke_expense']),
   "details": zod.string(),
   "amount": zod.number(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "category": zod.union([zod.literal('ingredients'),zod.literal('supplies'),zod.literal('delivery'),zod.literal('other'),zod.literal(null)]).nullish(),
+  "supplier": zod.string().nullish(),
+  "notes": zod.string().nullish()
 })
 
 
@@ -467,7 +492,10 @@ export const ListExpenseLogsResponseItem = zod.object({
   "type": zod.enum(['batch_production', 'palengke_expense']),
   "details": zod.string(),
   "amount": zod.number(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "category": zod.union([zod.literal('ingredients'),zod.literal('supplies'),zod.literal('delivery'),zod.literal('other'),zod.literal(null)]).nullish(),
+  "supplier": zod.string().nullish(),
+  "notes": zod.string().nullish()
 })
 export const ListExpenseLogsResponse = zod.array(ListExpenseLogsResponseItem)
 
@@ -477,12 +505,18 @@ export const ListExpenseLogsResponse = zod.array(ListExpenseLogsResponseItem)
  */
 export const createExpenseLogBodyAmountMin = 0;
 
+export const createExpenseLogBodySupplierMax = 120;
+
+export const createExpenseLogBodyNotesMax = 500;
+
 
 
 export const CreateExpenseLogBody = zod.object({
   "amount": zod.number().min(createExpenseLogBodyAmountMin),
   "details": zod.string(),
-  "category": zod.enum(['ingredients', 'supplies', 'delivery', 'other']).optional()
+  "category": zod.enum(['ingredients', 'supplies', 'delivery', 'other']).optional(),
+  "supplier": zod.string().max(createExpenseLogBodySupplierMax).nullish(),
+  "notes": zod.string().max(createExpenseLogBodyNotesMax).nullish()
 })
 
 export const CreateExpenseLogResponse = zod.object({
@@ -490,7 +524,328 @@ export const CreateExpenseLogResponse = zod.object({
   "type": zod.enum(['batch_production', 'palengke_expense']),
   "details": zod.string(),
   "amount": zod.number(),
-  "createdAt": zod.string()
+  "createdAt": zod.string(),
+  "category": zod.union([zod.literal('ingredients'),zod.literal('supplies'),zod.literal('delivery'),zod.literal('other'),zod.literal(null)]).nullish(),
+  "supplier": zod.string().nullish(),
+  "notes": zod.string().nullish()
+})
+
+
+/**
+ * @summary List ingredients with on-hand inventory and latest unit cost
+ */
+export const listInventoryIngredientsResponseQuantityAvailableMin = 0;
+
+export const listInventoryIngredientsResponseLatestUnitCostMin = 0;
+
+
+
+export const ListInventoryIngredientsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "name": zod.string(),
+  "baseUnit": zod.enum(['g', 'ml', 'each']),
+  "quantityAvailable": zod.number().min(listInventoryIngredientsResponseQuantityAvailableMin),
+  "latestUnitCost": zod.number().min(listInventoryIngredientsResponseLatestUnitCostMin)
+})
+export const ListInventoryIngredientsResponse = zod.array(ListInventoryIngredientsResponseItem)
+
+
+/**
+ * @summary Add an ingredient to the shared catalog
+ */
+export const createInventoryIngredientBodyNameMax = 100;
+
+
+
+export const CreateInventoryIngredientBody = zod.object({
+  "name": zod.string().min(1).max(createInventoryIngredientBodyNameMax),
+  "baseUnit": zod.enum(['g', 'ml', 'each'])
+})
+
+export const createInventoryIngredientResponseQuantityAvailableMin = 0;
+
+export const createInventoryIngredientResponseLatestUnitCostMin = 0;
+
+
+
+export const CreateInventoryIngredientResponse = zod.object({
+  "id": zod.number().int(),
+  "name": zod.string(),
+  "baseUnit": zod.enum(['g', 'ml', 'each']),
+  "quantityAvailable": zod.number().min(createInventoryIngredientResponseQuantityAvailableMin),
+  "latestUnitCost": zod.number().min(createInventoryIngredientResponseLatestUnitCostMin)
+})
+
+
+/**
+ * @summary Record an ingredient purchase and matching expense as one transaction
+ */
+
+export const createInventoryReceiptBodyQuantityExclusiveMin = 0;
+
+export const createInventoryReceiptBodyTotalCostExclusiveMin = 0;
+
+export const createInventoryReceiptBodySupplierMax = 120;
+
+export const createInventoryReceiptBodyNotesMax = 500;
+
+
+
+export const CreateInventoryReceiptBody = zod.object({
+  "ingredientId": zod.number().int().min(1),
+  "quantity": zod.number().gt(createInventoryReceiptBodyQuantityExclusiveMin),
+  "unit": zod.enum(['g', 'kg', 'ml', 'L', 'each']),
+  "totalCost": zod.number().gt(createInventoryReceiptBodyTotalCostExclusiveMin),
+  "supplier": zod.string().max(createInventoryReceiptBodySupplierMax).nullish(),
+  "notes": zod.string().max(createInventoryReceiptBodyNotesMax).nullish()
+})
+
+export const createInventoryReceiptResponseQuantityAvailableMin = 0;
+
+export const createInventoryReceiptResponseLatestUnitCostMin = 0;
+
+
+
+export const CreateInventoryReceiptResponse = zod.object({
+  "id": zod.number().int(),
+  "name": zod.string(),
+  "baseUnit": zod.enum(['g', 'ml', 'each']),
+  "quantityAvailable": zod.number().min(createInventoryReceiptResponseQuantityAvailableMin),
+  "latestUnitCost": zod.number().min(createInventoryReceiptResponseLatestUnitCostMin)
+})
+
+
+/**
+ * @summary Record an audited stock correction or spoilage adjustment
+ */
+
+export const createInventoryAdjustmentBodyUnitCostMin = 0;
+
+export const createInventoryAdjustmentBodyNotesMax = 500;
+
+
+
+export const CreateInventoryAdjustmentBody = zod.object({
+  "ingredientId": zod.number().int().min(1),
+  "quantityDelta": zod.number(),
+  "unitCost": zod.number().min(createInventoryAdjustmentBodyUnitCostMin).optional(),
+  "notes": zod.string().min(1).max(createInventoryAdjustmentBodyNotesMax)
+})
+
+export const createInventoryAdjustmentResponseQuantityAvailableMin = 0;
+
+export const createInventoryAdjustmentResponseLatestUnitCostMin = 0;
+
+
+
+export const CreateInventoryAdjustmentResponse = zod.object({
+  "id": zod.number().int(),
+  "name": zod.string(),
+  "baseUnit": zod.enum(['g', 'ml', 'each']),
+  "quantityAvailable": zod.number().min(createInventoryAdjustmentResponseQuantityAvailableMin),
+  "latestUnitCost": zod.number().min(createInventoryAdjustmentResponseLatestUnitCostMin)
+})
+
+
+/**
+ * @summary Get a product recipe cost
+ */
+
+
+
+export const GetProductCostParams = zod.object({
+  "productId": zod.coerce.number().int().min(1)
+})
+
+export const getProductCostResponseIngredientsItemNameMax = 100;
+
+export const getProductCostResponseIngredientsItemQuantityExclusiveMin = 0;
+
+export const getProductCostResponseIngredientsItemUnitMax = 24;
+
+export const getProductCostResponseIngredientsItemUnitCostMin = 0;
+
+export const getProductCostResponseIngredientsItemAvailableQuantityMin = 0;
+
+
+
+export const GetProductCostResponse = zod.object({
+  "productId": zod.number().int(),
+  "ingredients": zod.array(zod.object({
+  "ingredientId": zod.number().int().nullish(),
+  "name": zod.string().min(1).max(getProductCostResponseIngredientsItemNameMax),
+  "quantity": zod.number().gt(getProductCostResponseIngredientsItemQuantityExclusiveMin),
+  "unit": zod.string().min(1).max(getProductCostResponseIngredientsItemUnitMax),
+  "unitCost": zod.number().min(getProductCostResponseIngredientsItemUnitCostMin),
+  "availableQuantity": zod.number().min(getProductCostResponseIngredientsItemAvailableQuantityMin).optional(),
+  "baseUnit": zod.string().nullish()
+})),
+  "packagingCost": zod.number(),
+  "laborCost": zod.number(),
+  "overheadCost": zod.number()
+})
+
+
+/**
+ * @summary Save a product recipe and per-serving costs
+ */
+
+
+
+export const UpdateProductCostParams = zod.object({
+  "productId": zod.coerce.number().int().min(1)
+})
+
+export const updateProductCostBodyIngredientsItemNameMax = 100;
+
+export const updateProductCostBodyIngredientsItemQuantityExclusiveMin = 0;
+
+export const updateProductCostBodyIngredientsItemUnitMax = 24;
+
+export const updateProductCostBodyIngredientsItemUnitCostMin = 0;
+
+export const updateProductCostBodyIngredientsItemAvailableQuantityMin = 0;
+
+export const updateProductCostBodyIngredientsMax = 100;
+
+export const updateProductCostBodyPackagingCostMin = 0;
+
+export const updateProductCostBodyLaborCostMin = 0;
+
+export const updateProductCostBodyOverheadCostMin = 0;
+
+
+
+export const UpdateProductCostBody = zod.object({
+  "ingredients": zod.array(zod.object({
+  "ingredientId": zod.number().int().nullish(),
+  "name": zod.string().min(1).max(updateProductCostBodyIngredientsItemNameMax),
+  "quantity": zod.number().gt(updateProductCostBodyIngredientsItemQuantityExclusiveMin),
+  "unit": zod.string().min(1).max(updateProductCostBodyIngredientsItemUnitMax),
+  "unitCost": zod.number().min(updateProductCostBodyIngredientsItemUnitCostMin),
+  "availableQuantity": zod.number().min(updateProductCostBodyIngredientsItemAvailableQuantityMin).optional(),
+  "baseUnit": zod.string().nullish()
+})).max(updateProductCostBodyIngredientsMax),
+  "packagingCost": zod.number().min(updateProductCostBodyPackagingCostMin),
+  "laborCost": zod.number().min(updateProductCostBodyLaborCostMin),
+  "overheadCost": zod.number().min(updateProductCostBodyOverheadCostMin)
+})
+
+export const updateProductCostResponseIngredientsItemNameMax = 100;
+
+export const updateProductCostResponseIngredientsItemQuantityExclusiveMin = 0;
+
+export const updateProductCostResponseIngredientsItemUnitMax = 24;
+
+export const updateProductCostResponseIngredientsItemUnitCostMin = 0;
+
+export const updateProductCostResponseIngredientsItemAvailableQuantityMin = 0;
+
+
+
+export const UpdateProductCostResponse = zod.object({
+  "productId": zod.number().int(),
+  "ingredients": zod.array(zod.object({
+  "ingredientId": zod.number().int().nullish(),
+  "name": zod.string().min(1).max(updateProductCostResponseIngredientsItemNameMax),
+  "quantity": zod.number().gt(updateProductCostResponseIngredientsItemQuantityExclusiveMin),
+  "unit": zod.string().min(1).max(updateProductCostResponseIngredientsItemUnitMax),
+  "unitCost": zod.number().min(updateProductCostResponseIngredientsItemUnitCostMin),
+  "availableQuantity": zod.number().min(updateProductCostResponseIngredientsItemAvailableQuantityMin).optional(),
+  "baseUnit": zod.string().nullish()
+})),
+  "packagingCost": zod.number(),
+  "laborCost": zod.number(),
+  "overheadCost": zod.number()
+})
+
+
+/**
+ * @summary List saved price suggestions
+ */
+export const ListPriceProposalsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "productId": zod.number().int(),
+  "productName": zod.string(),
+  "currentPrice": zod.number(),
+  "costPerServing": zod.number(),
+  "pricingMethod": zod.enum(['margin', 'markup']),
+  "targetValue": zod.number(),
+  "proposedPrice": zod.number(),
+  "estimatedProfit": zod.number(),
+  "estimatedMargin": zod.number(),
+  "status": zod.enum(['pending', 'approved', 'rejected']),
+  "submittedBy": zod.string(),
+  "reviewedBy": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "reviewedAt": zod.string().nullable()
+})
+export const ListPriceProposalsResponse = zod.array(ListPriceProposalsResponseItem)
+
+
+/**
+ * @summary Calculate and submit a suggested product price
+ */
+
+export const createPriceProposalBodyTargetValueExclusiveMin = 0;
+
+
+
+export const CreatePriceProposalBody = zod.object({
+  "productId": zod.number().int().min(1),
+  "pricingMethod": zod.enum(['margin', 'markup']),
+  "targetValue": zod.number().gt(createPriceProposalBodyTargetValueExclusiveMin)
+})
+
+export const CreatePriceProposalResponse = zod.object({
+  "id": zod.number().int(),
+  "productId": zod.number().int(),
+  "productName": zod.string(),
+  "currentPrice": zod.number(),
+  "costPerServing": zod.number(),
+  "pricingMethod": zod.enum(['margin', 'markup']),
+  "targetValue": zod.number(),
+  "proposedPrice": zod.number(),
+  "estimatedProfit": zod.number(),
+  "estimatedMargin": zod.number(),
+  "status": zod.enum(['pending', 'approved', 'rejected']),
+  "submittedBy": zod.string(),
+  "reviewedBy": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "reviewedAt": zod.string().nullable()
+})
+
+
+/**
+ * @summary Approve or reject a price suggestion
+ */
+
+
+
+export const ReviewPriceProposalParams = zod.object({
+  "id": zod.coerce.number().int().min(1)
+})
+
+export const ReviewPriceProposalBody = zod.object({
+  "decision": zod.enum(['approve', 'reject'])
+})
+
+export const ReviewPriceProposalResponse = zod.object({
+  "id": zod.number().int(),
+  "productId": zod.number().int(),
+  "productName": zod.string(),
+  "currentPrice": zod.number(),
+  "costPerServing": zod.number(),
+  "pricingMethod": zod.enum(['margin', 'markup']),
+  "targetValue": zod.number(),
+  "proposedPrice": zod.number(),
+  "estimatedProfit": zod.number(),
+  "estimatedMargin": zod.number(),
+  "status": zod.enum(['pending', 'approved', 'rejected']),
+  "submittedBy": zod.string(),
+  "reviewedBy": zod.string().nullable(),
+  "createdAt": zod.string(),
+  "reviewedAt": zod.string().nullable()
 })
 
 

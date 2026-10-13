@@ -33,12 +33,12 @@ export function PinLoginModal() {
     if (!pin) return;
     setLoading(true);
     setError(null);
-    const success = await loginWithPin(pin);
+    const loginError = await loginWithPin(pin);
     setLoading(false);
-    if (success) {
+    if (loginError === null) {
       setPin('');
     } else {
-      setError('Invalid staff PIN. Try again.');
+      setError(loginError);
       setPin('');
     }
   };

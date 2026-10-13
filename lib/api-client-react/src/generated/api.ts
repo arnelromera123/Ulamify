@@ -24,13 +24,22 @@ import type {
   DashboardSummary,
   ExpenseLogInput,
   HealthStatus,
+  InventoryAdjustmentInput,
+  InventoryIngredient,
+  InventoryIngredientInput,
+  InventoryReceiptInput,
   ListOrdersParams,
   LoginInput,
   LoginResult,
   OperationLog,
   Order,
   OrderInput,
+  PriceProposal,
+  PriceProposalDecision,
+  PriceProposalInput,
   Product,
+  ProductCost,
+  ProductCostInput,
   ProductInput,
   ProductUpdate,
   ProductionLogInput,
@@ -236,6 +245,157 @@ export const useLogin = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getLoginMutationOptions(options));
+    }
+
+export const getGetAuthSessionUrl = () => {
+
+
+
+
+  return `/api/auth/session`
+}
+
+/**
+ * @summary Restore the current staff session
+ */
+export const getAuthSession = async ( options?: Parameters<typeof customFetch>[1]): Promise<LoginResult> => {
+
+  return customFetch<LoginResult>(getGetAuthSessionUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAuthSessionQueryKey = () => {
+    return [
+    `/api/auth/session`
+    ] as const;
+    }
+
+
+export const getGetAuthSessionQueryOptions = <TData = Awaited<ReturnType<typeof getAuthSession>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAuthSession>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAuthSessionQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAuthSession>>> = ({ signal }) => getAuthSession({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAuthSession>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAuthSessionQueryResult = NonNullable<Awaited<ReturnType<typeof getAuthSession>>>
+export type GetAuthSessionQueryError = ErrorType<void>
+
+
+/**
+ * @summary Restore the current staff session
+ */
+
+export function useGetAuthSession<TData = Awaited<ReturnType<typeof getAuthSession>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAuthSession>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAuthSessionQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getLogoutUrl = () => {
+
+
+
+
+  return `/api/auth/logout`
+}
+
+/**
+ * @summary Revoke the current staff session
+ */
+export const logout = async ( options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getLogoutUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getLogoutMutationKey = () => ['logout'] as const;
+
+export const getLogoutMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof logout>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof logout>>, TError,void, TContext> => {
+
+const mutationKey = getLogoutMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof logout>>, void> = () => {
+
+
+          return  logout(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type LogoutMutationResult = NonNullable<Awaited<ReturnType<typeof logout>>>
+
+    export type LogoutMutationError = ErrorType<unknown>
+
+
+    /**
+ * @summary Revoke the current staff session
+ */
+export const useLogout = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof logout>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof logout>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getLogoutMutationOptions(options));
     }
 
 export const getListUsersUrl = () => {
@@ -1905,5 +2065,766 @@ export const useCreateExpenseLog = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getCreateExpenseLogMutationOptions(options));
+    }
+
+export const getListInventoryIngredientsUrl = () => {
+
+
+
+
+  return `/api/inventory/ingredients`
+}
+
+/**
+ * @summary List ingredients with on-hand inventory and latest unit cost
+ */
+export const listInventoryIngredients = async ( options?: Parameters<typeof customFetch>[1]): Promise<InventoryIngredient[]> => {
+
+  return customFetch<InventoryIngredient[]>(getListInventoryIngredientsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListInventoryIngredientsQueryKey = () => {
+    return [
+    `/api/inventory/ingredients`
+    ] as const;
+    }
+
+
+export const getListInventoryIngredientsQueryOptions = <TData = Awaited<ReturnType<typeof listInventoryIngredients>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listInventoryIngredients>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListInventoryIngredientsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listInventoryIngredients>>> = ({ signal }) => listInventoryIngredients({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listInventoryIngredients>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListInventoryIngredientsQueryResult = NonNullable<Awaited<ReturnType<typeof listInventoryIngredients>>>
+export type ListInventoryIngredientsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List ingredients with on-hand inventory and latest unit cost
+ */
+
+export function useListInventoryIngredients<TData = Awaited<ReturnType<typeof listInventoryIngredients>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listInventoryIngredients>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListInventoryIngredientsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateInventoryIngredientUrl = () => {
+
+
+
+
+  return `/api/inventory/ingredients`
+}
+
+/**
+ * @summary Add an ingredient to the shared catalog
+ */
+export const createInventoryIngredient = async (inventoryIngredientInput: InventoryIngredientInput, options?: Parameters<typeof customFetch>[1]): Promise<InventoryIngredient> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<InventoryIngredient>(getCreateInventoryIngredientUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(inventoryIngredientInput)
+  }
+);}
+
+
+
+
+
+export const getCreateInventoryIngredientMutationKey = () => ['createInventoryIngredient'] as const;
+
+export const getCreateInventoryIngredientMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createInventoryIngredient>>, TError,CreateInventoryIngredientMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createInventoryIngredient>>, TError,CreateInventoryIngredientMutationVariables, TContext> => {
+
+const mutationKey = getCreateInventoryIngredientMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createInventoryIngredient>>, CreateInventoryIngredientMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createInventoryIngredient(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateInventoryIngredientMutationResult = NonNullable<Awaited<ReturnType<typeof createInventoryIngredient>>>
+    export type CreateInventoryIngredientMutationBody = BodyType<InventoryIngredientInput>
+    export type CreateInventoryIngredientMutationError = ErrorType<unknown>
+    export type CreateInventoryIngredientMutationVariables = {data: BodyType<InventoryIngredientInput>}
+
+    /**
+ * @summary Add an ingredient to the shared catalog
+ */
+export const useCreateInventoryIngredient = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createInventoryIngredient>>, TError,CreateInventoryIngredientMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createInventoryIngredient>>,
+        TError,
+        CreateInventoryIngredientMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreateInventoryIngredientMutationOptions(options));
+    }
+
+export const getCreateInventoryReceiptUrl = () => {
+
+
+
+
+  return `/api/inventory/receipts`
+}
+
+/**
+ * @summary Record an ingredient purchase and matching expense as one transaction
+ */
+export const createInventoryReceipt = async (inventoryReceiptInput: InventoryReceiptInput, options?: Parameters<typeof customFetch>[1]): Promise<InventoryIngredient> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<InventoryIngredient>(getCreateInventoryReceiptUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(inventoryReceiptInput)
+  }
+);}
+
+
+
+
+
+export const getCreateInventoryReceiptMutationKey = () => ['createInventoryReceipt'] as const;
+
+export const getCreateInventoryReceiptMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createInventoryReceipt>>, TError,CreateInventoryReceiptMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createInventoryReceipt>>, TError,CreateInventoryReceiptMutationVariables, TContext> => {
+
+const mutationKey = getCreateInventoryReceiptMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createInventoryReceipt>>, CreateInventoryReceiptMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createInventoryReceipt(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateInventoryReceiptMutationResult = NonNullable<Awaited<ReturnType<typeof createInventoryReceipt>>>
+    export type CreateInventoryReceiptMutationBody = BodyType<InventoryReceiptInput>
+    export type CreateInventoryReceiptMutationError = ErrorType<unknown>
+    export type CreateInventoryReceiptMutationVariables = {data: BodyType<InventoryReceiptInput>}
+
+    /**
+ * @summary Record an ingredient purchase and matching expense as one transaction
+ */
+export const useCreateInventoryReceipt = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createInventoryReceipt>>, TError,CreateInventoryReceiptMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createInventoryReceipt>>,
+        TError,
+        CreateInventoryReceiptMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreateInventoryReceiptMutationOptions(options));
+    }
+
+export const getCreateInventoryAdjustmentUrl = () => {
+
+
+
+
+  return `/api/inventory/adjustments`
+}
+
+/**
+ * @summary Record an audited stock correction or spoilage adjustment
+ */
+export const createInventoryAdjustment = async (inventoryAdjustmentInput: InventoryAdjustmentInput, options?: Parameters<typeof customFetch>[1]): Promise<InventoryIngredient> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<InventoryIngredient>(getCreateInventoryAdjustmentUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(inventoryAdjustmentInput)
+  }
+);}
+
+
+
+
+
+export const getCreateInventoryAdjustmentMutationKey = () => ['createInventoryAdjustment'] as const;
+
+export const getCreateInventoryAdjustmentMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createInventoryAdjustment>>, TError,CreateInventoryAdjustmentMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createInventoryAdjustment>>, TError,CreateInventoryAdjustmentMutationVariables, TContext> => {
+
+const mutationKey = getCreateInventoryAdjustmentMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createInventoryAdjustment>>, CreateInventoryAdjustmentMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createInventoryAdjustment(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateInventoryAdjustmentMutationResult = NonNullable<Awaited<ReturnType<typeof createInventoryAdjustment>>>
+    export type CreateInventoryAdjustmentMutationBody = BodyType<InventoryAdjustmentInput>
+    export type CreateInventoryAdjustmentMutationError = ErrorType<unknown>
+    export type CreateInventoryAdjustmentMutationVariables = {data: BodyType<InventoryAdjustmentInput>}
+
+    /**
+ * @summary Record an audited stock correction or spoilage adjustment
+ */
+export const useCreateInventoryAdjustment = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createInventoryAdjustment>>, TError,CreateInventoryAdjustmentMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createInventoryAdjustment>>,
+        TError,
+        CreateInventoryAdjustmentMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreateInventoryAdjustmentMutationOptions(options));
+    }
+
+export const getGetProductCostUrl = (productId: number,) => {
+
+
+
+
+  return `/api/costing/products/${productId}`
+}
+
+/**
+ * @summary Get a product recipe cost
+ */
+export const getProductCost = async (productId: number, options?: Parameters<typeof customFetch>[1]): Promise<ProductCost> => {
+
+  return customFetch<ProductCost>(getGetProductCostUrl(productId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetProductCostQueryKey = (productId: number,) => {
+    return [
+    `/api/costing/products/${productId}`
+    ] as const;
+    }
+
+
+export const getGetProductCostQueryOptions = <TData = Awaited<ReturnType<typeof getProductCost>>, TError = ErrorType<unknown>>(productId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getProductCost>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetProductCostQueryKey(productId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProductCost>>> = ({ signal }) => getProductCost(productId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: productId !== null && productId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getProductCost>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetProductCostQueryResult = NonNullable<Awaited<ReturnType<typeof getProductCost>>>
+export type GetProductCostQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get a product recipe cost
+ */
+
+export function useGetProductCost<TData = Awaited<ReturnType<typeof getProductCost>>, TError = ErrorType<unknown>>(
+ productId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getProductCost>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetProductCostQueryOptions(productId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateProductCostUrl = (productId: number,) => {
+
+
+
+
+  return `/api/costing/products/${productId}`
+}
+
+/**
+ * @summary Save a product recipe and per-serving costs
+ */
+export const updateProductCost = async (productId: number,
+    productCostInput: ProductCostInput, options?: Parameters<typeof customFetch>[1]): Promise<ProductCost> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<ProductCost>(getUpdateProductCostUrl(productId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(productCostInput)
+  }
+);}
+
+
+
+
+
+export const getUpdateProductCostMutationKey = () => ['updateProductCost'] as const;
+
+export const getUpdateProductCostMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateProductCost>>, TError,UpdateProductCostMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateProductCost>>, TError,UpdateProductCostMutationVariables, TContext> => {
+
+const mutationKey = getUpdateProductCostMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateProductCost>>, UpdateProductCostMutationVariables> = (props) => {
+          const {productId,data} = props ?? {};
+
+          return  updateProductCost(productId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateProductCostMutationResult = NonNullable<Awaited<ReturnType<typeof updateProductCost>>>
+    export type UpdateProductCostMutationBody = BodyType<ProductCostInput>
+    export type UpdateProductCostMutationError = ErrorType<unknown>
+    export type UpdateProductCostMutationVariables = {productId: number;data: BodyType<ProductCostInput>}
+
+    /**
+ * @summary Save a product recipe and per-serving costs
+ */
+export const useUpdateProductCost = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateProductCost>>, TError,UpdateProductCostMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateProductCost>>,
+        TError,
+        UpdateProductCostMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateProductCostMutationOptions(options));
+    }
+
+export const getListPriceProposalsUrl = () => {
+
+
+
+
+  return `/api/costing/proposals`
+}
+
+/**
+ * @summary List saved price suggestions
+ */
+export const listPriceProposals = async ( options?: Parameters<typeof customFetch>[1]): Promise<PriceProposal[]> => {
+
+  return customFetch<PriceProposal[]>(getListPriceProposalsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListPriceProposalsQueryKey = () => {
+    return [
+    `/api/costing/proposals`
+    ] as const;
+    }
+
+
+export const getListPriceProposalsQueryOptions = <TData = Awaited<ReturnType<typeof listPriceProposals>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listPriceProposals>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPriceProposalsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPriceProposals>>> = ({ signal }) => listPriceProposals({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPriceProposals>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListPriceProposalsQueryResult = NonNullable<Awaited<ReturnType<typeof listPriceProposals>>>
+export type ListPriceProposalsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List saved price suggestions
+ */
+
+export function useListPriceProposals<TData = Awaited<ReturnType<typeof listPriceProposals>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listPriceProposals>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListPriceProposalsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreatePriceProposalUrl = () => {
+
+
+
+
+  return `/api/costing/proposals`
+}
+
+/**
+ * @summary Calculate and submit a suggested product price
+ */
+export const createPriceProposal = async (priceProposalInput: PriceProposalInput, options?: Parameters<typeof customFetch>[1]): Promise<PriceProposal> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<PriceProposal>(getCreatePriceProposalUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(priceProposalInput)
+  }
+);}
+
+
+
+
+
+export const getCreatePriceProposalMutationKey = () => ['createPriceProposal'] as const;
+
+export const getCreatePriceProposalMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPriceProposal>>, TError,CreatePriceProposalMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createPriceProposal>>, TError,CreatePriceProposalMutationVariables, TContext> => {
+
+const mutationKey = getCreatePriceProposalMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createPriceProposal>>, CreatePriceProposalMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createPriceProposal(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreatePriceProposalMutationResult = NonNullable<Awaited<ReturnType<typeof createPriceProposal>>>
+    export type CreatePriceProposalMutationBody = BodyType<PriceProposalInput>
+    export type CreatePriceProposalMutationError = ErrorType<unknown>
+    export type CreatePriceProposalMutationVariables = {data: BodyType<PriceProposalInput>}
+
+    /**
+ * @summary Calculate and submit a suggested product price
+ */
+export const useCreatePriceProposal = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPriceProposal>>, TError,CreatePriceProposalMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createPriceProposal>>,
+        TError,
+        CreatePriceProposalMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreatePriceProposalMutationOptions(options));
+    }
+
+export const getReviewPriceProposalUrl = (id: number,) => {
+
+
+
+
+  return `/api/costing/proposals/${id}`
+}
+
+/**
+ * @summary Approve or reject a price suggestion
+ */
+export const reviewPriceProposal = async (id: number,
+    priceProposalDecision: PriceProposalDecision, options?: Parameters<typeof customFetch>[1]): Promise<PriceProposal> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<PriceProposal>(getReviewPriceProposalUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(priceProposalDecision)
+  }
+);}
+
+
+
+
+
+export const getReviewPriceProposalMutationKey = () => ['reviewPriceProposal'] as const;
+
+export const getReviewPriceProposalMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reviewPriceProposal>>, TError,ReviewPriceProposalMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reviewPriceProposal>>, TError,ReviewPriceProposalMutationVariables, TContext> => {
+
+const mutationKey = getReviewPriceProposalMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reviewPriceProposal>>, ReviewPriceProposalMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  reviewPriceProposal(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReviewPriceProposalMutationResult = NonNullable<Awaited<ReturnType<typeof reviewPriceProposal>>>
+    export type ReviewPriceProposalMutationBody = BodyType<PriceProposalDecision>
+    export type ReviewPriceProposalMutationError = ErrorType<unknown>
+    export type ReviewPriceProposalMutationVariables = {id: number;data: BodyType<PriceProposalDecision>}
+
+    /**
+ * @summary Approve or reject a price suggestion
+ */
+export const useReviewPriceProposal = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reviewPriceProposal>>, TError,ReviewPriceProposalMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof reviewPriceProposal>>,
+        TError,
+        ReviewPriceProposalMutationVariables,
+        TContext
+      > => {
+      return useMutation(getReviewPriceProposalMutationOptions(options));
     }
 

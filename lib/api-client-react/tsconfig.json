@@ -9,5 +9,8 @@
     "rootDir": "src",
     "lib": ["dom", "dom.iterable", "es2022"]
   },
+  "references": [
+    { "path": "../api-zod" }
+  ],
   "include": ["src"]
 }

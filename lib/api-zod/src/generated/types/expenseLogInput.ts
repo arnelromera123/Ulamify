@@ -12,4 +12,14 @@ export interface ExpenseLogInput {
   amount: number;
   details: string;
   category?: ExpenseLogInputCategory;
+  /**
+     * @maxLength 120
+     * @nullable
+     */
+  supplier?: string | null;
+  /**
+     * @maxLength 500
+     * @nullable
+     */
+  notes?: string | null;
 }

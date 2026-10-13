@@ -15,6 +15,13 @@
       "when": 1790928761321,
       "tag": "0001_stiff_vulcan",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791882539417,
+      "tag": "0002_black_odin",
+      "breakpoints": true
     }
   ]
 }

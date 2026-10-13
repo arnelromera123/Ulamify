@@ -6,6 +6,8 @@ info:
 servers:
   - url: /api
     description: Base API path
+security:
+  - sessionCookie: []
 tags:
   - name: health
     description: Health operations
@@ -23,9 +25,12 @@ tags:
     description: Owner dashboard summaries
   - name: store
     description: Store profile settings
+  - name: costing
+    description: Recipe costs and pricing suggestions
 paths:
   /healthz:
     get:
+      security: []
       operationId: healthCheck
       tags: [health]
       summary: Health check
@@ -39,6 +44,7 @@ paths:
                 $ref: "#/components/schemas/HealthStatus"
   /auth/login:
     post:
+      security: []
       operationId: login
       tags: [auth]
       summary: Staff PIN login
@@ -57,6 +63,30 @@ paths:
                 $ref: "#/components/schemas/LoginResult"
         "401":
           description: Invalid PIN
+        "429":
+          description: Too many failed PIN attempts
+  /auth/session:
+    get:
+      operationId: getAuthSession
+      tags: [auth]
+      summary: Restore the current staff session
+      responses:
+        "200":
+          description: Current authenticated staff member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResult"
+        "401":
+          description: No valid session
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Revoke the current staff session
+      responses:
+        "204":
+          description: Session revoked
   /users:
     get:
       operationId: listUsers
@@ -425,7 +455,178 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OperationLog"
+  /inventory/ingredients:
+    get:
+      operationId: listInventoryIngredients
+      tags: [inventory]
+      summary: List ingredients with on-hand inventory and latest unit cost
+      responses:
+        "200":
+          description: Ingredient inventory
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InventoryIngredient"
+    post:
+      operationId: createInventoryIngredient
+      tags: [inventory]
+      summary: Add an ingredient to the shared catalog
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryIngredientInput"
+      responses:
+        "201":
+          description: Created ingredient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryIngredient"
+  /inventory/receipts:
+    post:
+      operationId: createInventoryReceipt
+      tags: [inventory]
+      summary: Record an ingredient purchase and matching expense as one transaction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryReceiptInput"
+      responses:
+        "201":
+          description: Recorded purchase lot and expense
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryIngredient"
+  /inventory/adjustments:
+    post:
+      operationId: createInventoryAdjustment
+      tags: [inventory]
+      summary: Record an audited stock correction or spoilage adjustment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryAdjustmentInput"
+      responses:
+        "200":
+          description: Updated ingredient inventory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryIngredient"
+  /costing/products/{productId}:
+    get:
+      operationId: getProductCost
+      tags: [costing]
+      summary: Get a product recipe cost
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Product cost
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductCost"
+    put:
+      operationId: updateProductCost
+      tags: [costing]
+      summary: Save a product recipe and per-serving costs
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductCostInput"
+      responses:
+        "200":
+          description: Saved product costs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductCost"
+  /costing/proposals:
+    get:
+      operationId: listPriceProposals
+      tags: [costing]
+      summary: List saved price suggestions
+      responses:
+        "200":
+          description: Price suggestions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PriceProposal"
+    post:
+      operationId: createPriceProposal
+      tags: [costing]
+      summary: Calculate and submit a suggested product price
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PriceProposalInput"
+      responses:
+        "201":
+          description: Saved price suggestion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PriceProposal"
+  /costing/proposals/{id}:
+    patch:
+      operationId: reviewPriceProposal
+      tags: [costing]
+      summary: Approve or reject a price suggestion
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PriceProposalDecision"
+      responses:
+        "200":
+          description: Reviewed price suggestion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PriceProposal"
 components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: ulamify_session
   schemas:
     HealthStatus:
       type: object
@@ -438,7 +639,7 @@ components:
       type: string
     RolePermission:
       type: string
-      enum: [counter, dashboard, orders, kitchen, purchasing, settings, manage-staff, configure-prices]
+      enum: [counter, dashboard, orders, kitchen, purchasing, settings, manage-staff, configure-prices, costing]
     Role:
       type: object
       required: [code, name, permissions, isSystem]
@@ -746,6 +947,12 @@ components:
         category:
           type: string
           enum: [ingredients, supplies, delivery, other]
+        supplier:
+          type: ["string", "null"]
+          maxLength: 120
+        notes:
+          type: ["string", "null"]
+          maxLength: 500
     OperationLog:
       type: object
       required: [id, type, details, amount, createdAt]
@@ -761,3 +968,196 @@ components:
           type: number
         createdAt:
           type: string
+        category:
+          type: ["string", "null"]
+          enum: [ingredients, supplies, delivery, other, null]
+        supplier:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+    RecipeIngredient:
+      type: object
+      required: [name, quantity, unit, unitCost]
+      properties:
+        ingredientId:
+          type: ["integer", "null"]
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        quantity:
+          type: number
+          exclusiveMinimum: 0
+        unit:
+          type: string
+          minLength: 1
+          maxLength: 24
+        unitCost:
+          type: number
+          minimum: 0
+        availableQuantity:
+          type: number
+          minimum: 0
+        baseUnit:
+          type: ["string", "null"]
+    InventoryBaseUnit:
+      type: string
+      enum: [g, ml, each]
+    InventoryPurchaseUnit:
+      type: string
+      enum: [g, kg, ml, L, each]
+    InventoryIngredient:
+      type: object
+      required: [id, name, baseUnit, quantityAvailable, latestUnitCost]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        baseUnit:
+          $ref: "#/components/schemas/InventoryBaseUnit"
+        quantityAvailable:
+          type: number
+          minimum: 0
+        latestUnitCost:
+          type: number
+          minimum: 0
+    InventoryIngredientInput:
+      type: object
+      required: [name, baseUnit]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        baseUnit:
+          $ref: "#/components/schemas/InventoryBaseUnit"
+    InventoryReceiptInput:
+      type: object
+      required: [ingredientId, quantity, unit, totalCost]
+      properties:
+        ingredientId:
+          type: integer
+          minimum: 1
+        quantity:
+          type: number
+          exclusiveMinimum: 0
+        unit:
+          $ref: "#/components/schemas/InventoryPurchaseUnit"
+        totalCost:
+          type: number
+          exclusiveMinimum: 0
+        supplier:
+          type: ["string", "null"]
+          maxLength: 120
+        notes:
+          type: ["string", "null"]
+          maxLength: 500
+    InventoryAdjustmentInput:
+      type: object
+      required: [ingredientId, quantityDelta, notes]
+      properties:
+        ingredientId:
+          type: integer
+          minimum: 1
+        quantityDelta:
+          type: number
+          not:
+            const: 0
+        unitCost:
+          type: number
+          minimum: 0
+        notes:
+          type: string
+          minLength: 1
+          maxLength: 500
+    ProductCost:
+      type: object
+      required: [productId, ingredients, packagingCost, laborCost, overheadCost]
+      properties:
+        productId:
+          type: integer
+        ingredients:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecipeIngredient"
+        packagingCost:
+          type: number
+        laborCost:
+          type: number
+        overheadCost:
+          type: number
+    ProductCostInput:
+      type: object
+      required: [ingredients, packagingCost, laborCost, overheadCost]
+      properties:
+        ingredients:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/RecipeIngredient"
+        packagingCost:
+          type: number
+          minimum: 0
+        laborCost:
+          type: number
+          minimum: 0
+        overheadCost:
+          type: number
+          minimum: 0
+    PriceProposalInput:
+      type: object
+      required: [productId, pricingMethod, targetValue]
+      properties:
+        productId:
+          type: integer
+          minimum: 1
+        pricingMethod:
+          type: string
+          enum: [margin, markup]
+        targetValue:
+          type: number
+          exclusiveMinimum: 0
+    PriceProposalDecision:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [approve, reject]
+    PriceProposal:
+      type: object
+      required: [id, productId, productName, currentPrice, costPerServing, pricingMethod, targetValue, proposedPrice, estimatedProfit, estimatedMargin, status, submittedBy, reviewedBy, createdAt, reviewedAt]
+      properties:
+        id:
+          type: integer
+        productId:
+          type: integer
+        productName:
+          type: string
+        currentPrice:
+          type: number
+        costPerServing:
+          type: number
+        pricingMethod:
+          type: string
+          enum: [margin, markup]
+        targetValue:
+          type: number
+        proposedPrice:
+          type: number
+        estimatedProfit:
+          type: number
+        estimatedMargin:
+          type: number
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+        submittedBy:
+          type: string
+        reviewedBy:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        reviewedAt:
+          type: ["string", "null"]

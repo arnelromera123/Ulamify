@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, gt, inArray, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
   ApproveVoidRequestBody,
@@ -6,11 +6,21 @@ import {
   ApproveVoidRequestResponse,
   CreateExpenseLogBody,
   CreateExpenseLogResponse,
+  CreateInventoryAdjustmentBody,
+  CreateInventoryAdjustmentResponse,
+  CreateInventoryIngredientBody,
+  CreateInventoryIngredientResponse,
+  CreateInventoryReceiptBody,
+  CreateInventoryReceiptResponse,
+  ListInventoryIngredientsResponse,
+  CreatePriceProposalBody,
+  CreatePriceProposalResponse,
   CreateOrderBody,
   CreateOrderResponse,
   CreateProductBody,
   CreateProductResponse,
   GetStoreProfileResponse,
+  GetProductCostResponse,
   CreateRoleBody,
   CreateRoleResponse,
   CreateProductionLogBody,
@@ -25,6 +35,7 @@ import {
   ListOrdersResponse,
   ListProductsResponse,
   ListExpenseLogsResponse,
+  ListPriceProposalsResponse,
   ListRolesResponse,
   ListUsersResponse,
   ListVoidRequestsResponse,
@@ -40,14 +51,47 @@ import {
   UpdateUserResponse,
   UpdateStoreProfileBody,
   UpdateStoreProfileResponse,
+  UpdateProductCostBody,
+  UpdateProductCostParams,
+  UpdateProductCostResponse,
+  ReviewPriceProposalBody,
+  ReviewPriceProposalParams,
+  ReviewPriceProposalResponse,
+  CreateMarketRunBody,
+  MarketRunResponse,
+  ListMarketRunsResponse,
 } from "@workspace/api-zod";
 import type { RolePermission } from "@workspace/api-zod";
 import {
+  clearFailedLogins,
+  createSession,
+  getAuthenticatedUser,
+  hashPin,
+  loginIsBlocked,
+  migratePlaintextPins,
+  recordFailedLogin,
+  requireAuth,
+  requireOwner,
+  requireOwnerOrManager,
+  requirePermission,
+  revokeSession,
+  verifyPin,
+} from "../lib/auth";
+import {
+  authSessionsTable,
   db,
   operationLogsTable,
   orderItemsTable,
   ordersTable,
   productsTable,
+  productCostProfilesTable,
+  recipeIngredientsTable,
+  ingredientsTable,
+  inventoryLotsTable,
+  inventoryMovementsTable,
+  marketRunsTable,
+  marketRunItemsTable,
+  priceProposalsTable,
   storeProfileTable,
   usersTable,
   userRolesTable,
@@ -70,7 +114,7 @@ const seedProducts = [
 
 const seedOwnerUser = {
   name: "Owner Admin",
-  pin: "1234",
+  pin: "",
   role: "owner" as const,
   isActive: true,
 };
@@ -88,7 +132,14 @@ const seedRoles = [
       "settings",
       "manage-staff",
       "configure-prices",
+      "costing",
     ],
+    isSystem: true,
+  },
+  {
+    code: "manager",
+    name: "Manager",
+    permissions: ["dashboard", "purchasing", "costing"],
     isSystem: true,
   },
   {
@@ -116,6 +167,18 @@ function money(value: string | number | null | undefined): number {
 }
 
 class StockShortageError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+class IngredientShortageError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+class InvalidInventoryAdjustmentError extends Error {
   constructor(message: string) {
     super(message);
   }
@@ -158,8 +221,159 @@ function userResponse(
   };
 }
 
+async function productCostResponse(productId: number) {
+  const [profile] = await db
+    .select()
+    .from(productCostProfilesTable)
+    .where(eq(productCostProfilesTable.productId, productId));
+  const ingredients = await db
+    .select()
+    .from(recipeIngredientsTable)
+    .where(eq(recipeIngredientsTable.productId, productId))
+    .orderBy(recipeIngredientsTable.id);
+  const linkedIds = ingredients
+    .map((ingredient) => ingredient.ingredientId)
+    .filter((ingredientId): ingredientId is number => ingredientId !== null);
+  const lots = linkedIds.length
+    ? await db
+        .select()
+        .from(inventoryLotsTable)
+        .where(inArray(inventoryLotsTable.ingredientId, linkedIds))
+        .orderBy(asc(inventoryLotsTable.purchasedAt), asc(inventoryLotsTable.id))
+    : [];
+  const catalogs = linkedIds.length
+    ? await db.select().from(ingredientsTable).where(inArray(ingredientsTable.id, linkedIds))
+    : [];
+  const catalogById = new Map(catalogs.map((ingredient) => [ingredient.id, ingredient]));
+  const lotsByIngredient = new Map<number, typeof lots>();
+  for (const lot of lots) {
+    const current = lotsByIngredient.get(lot.ingredientId) ?? [];
+    current.push(lot);
+    lotsByIngredient.set(lot.ingredientId, current);
+  }
+  return {
+    productId,
+    ingredients: ingredients.map((ingredient) => {
+      const catalog = ingredient.ingredientId === null ? undefined : catalogById.get(ingredient.ingredientId);
+      const ingredientLots = ingredient.ingredientId === null ? [] : lotsByIngredient.get(ingredient.ingredientId) ?? [];
+      const availableQuantity = ingredientLots.reduce((sum, lot) => sum + money(lot.quantityRemaining), 0);
+      const neededQuantity = money(ingredient.quantity);
+      const fallbackCost = money(ingredient.unitCost);
+      let remainingNeeded = neededQuantity;
+      let projectedCost = 0;
+      for (const lot of ingredientLots) {
+        const available = money(lot.quantityRemaining);
+        const allocated = Math.min(available, remainingNeeded);
+        projectedCost += allocated * money(lot.unitCost);
+        remainingNeeded -= allocated;
+        if (remainingNeeded <= 0) break;
+      }
+      if (remainingNeeded > 0) {
+        const lastKnownCost = ingredientLots.at(-1)?.unitCost;
+        projectedCost += remainingNeeded * money(lastKnownCost ?? fallbackCost);
+      }
+      const projectedUnitCost =
+        ingredient.ingredientId !== null && ingredientLots.length > 0 && neededQuantity > 0
+          ? projectedCost / neededQuantity
+          : fallbackCost;
+      return {
+        name: ingredient.name,
+        quantity: money(ingredient.quantity),
+        unit: ingredient.unit,
+        unitCost: money(projectedUnitCost),
+        ingredientId: ingredient.ingredientId,
+        availableQuantity: money(availableQuantity),
+        baseUnit: catalog?.baseUnit ?? null,
+      };
+    }),
+    packagingCost: money(profile?.packagingCost),
+    laborCost: money(profile?.laborCost),
+    overheadCost: money(profile?.overheadCost),
+  };
+}
+
+const purchaseUnitConversions = {
+  g: { baseUnit: "g", factor: 1 },
+  kg: { baseUnit: "g", factor: 1000 },
+  ml: { baseUnit: "ml", factor: 1 },
+  L: { baseUnit: "ml", factor: 1000 },
+  each: { baseUnit: "each", factor: 1 },
+} as const;
+
+async function inventoryIngredientResponse(ingredientId: number) {
+  const [ingredient] = await db
+    .select()
+    .from(ingredientsTable)
+    .where(eq(ingredientsTable.id, ingredientId));
+  if (!ingredient) return null;
+  const lots = await db
+    .select()
+    .from(inventoryLotsTable)
+    .where(eq(inventoryLotsTable.ingredientId, ingredientId))
+    .orderBy(desc(inventoryLotsTable.purchasedAt), desc(inventoryLotsTable.id));
+  return {
+    id: ingredient.id,
+    name: ingredient.name,
+    baseUnit: ingredient.baseUnit,
+    quantityAvailable: money(lots.reduce((sum, lot) => sum + money(lot.quantityRemaining), 0)),
+    latestUnitCost: money(lots[0]?.unitCost),
+  };
+}
+
+async function priceProposalResponses() {
+  const [proposals, products, users] = await Promise.all([
+    db.select().from(priceProposalsTable).orderBy(desc(priceProposalsTable.createdAt)),
+    db.select({ id: productsTable.id, name: productsTable.name, price: productsTable.price }).from(productsTable),
+    db.select({ id: usersTable.id, name: usersTable.name }).from(usersTable),
+  ]);
+  const productsById = new Map(products.map((product) => [product.id, product]));
+  const usersById = new Map(users.map((user) => [user.id, user.name]));
+  return proposals.map((proposal) => {
+    const product = productsById.get(proposal.productId);
+    if (!product) throw new Error(`Product ${proposal.productId} not found for price proposal ${proposal.id}`);
+    const costPerServing = money(proposal.costPerServing);
+    const proposedPrice = money(proposal.proposedPrice);
+    return {
+      id: proposal.id,
+      productId: proposal.productId,
+      productName: product.name,
+      currentPrice: money(proposal.currentPrice),
+      costPerServing,
+      pricingMethod: proposal.pricingMethod as "margin" | "markup",
+      targetValue: money(proposal.targetValue),
+      proposedPrice,
+      estimatedProfit: Number((proposedPrice - costPerServing).toFixed(2)),
+      estimatedMargin: proposedPrice > 0 ? (proposedPrice - costPerServing) / proposedPrice : 0,
+      status: proposal.status as "pending" | "approved" | "rejected",
+      submittedBy: usersById.get(proposal.submittedByUserId) ?? "Unknown staff",
+      reviewedBy: proposal.reviewedByUserId === null ? null : usersById.get(proposal.reviewedByUserId) ?? "Unknown staff",
+      createdAt: proposal.createdAt.toISOString(),
+      reviewedAt: proposal.reviewedAt?.toISOString() ?? null,
+    };
+  });
+}
+
 async function ensureSeedRoles() {
   await db.insert(userRolesTable).values(seedRoles).onConflictDoNothing();
+  await db
+    .update(userRolesTable)
+    .set({
+      name: "Manager",
+      permissions: ["dashboard", "purchasing", "costing"],
+      isSystem: true,
+    })
+    .where(eq(userRolesTable.code, "manager"));
+  await db
+    .update(userRolesTable)
+    .set({
+      permissions: sql`${userRolesTable.permissions} || '["costing"]'::jsonb`,
+    })
+    .where(
+      and(
+        eq(userRolesTable.code, "owner"),
+        sql`NOT (${userRolesTable.permissions} @> '["costing"]'::jsonb)`,
+      ),
+    );
 }
 
 async function ensureSeedProducts() {
@@ -170,9 +384,16 @@ async function ensureSeedProducts() {
 
 async function ensureSeedUser() {
   await ensureSeedRoles();
+  await migratePlaintextPins();
   const existing = await db.select().from(usersTable).limit(1);
   if (existing.length > 0) return;
-  await db.insert(usersTable).values(seedOwnerUser);
+  const pin = process.env.ADMIN_BOOTSTRAP_PIN;
+  if (!pin || !/^\d{4,6}$/.test(pin)) {
+    throw new Error(
+      "ADMIN_BOOTSTRAP_PIN must be set to a 4-6 digit PIN before creating the first Owner/Admin account.",
+    );
+  }
+  await db.insert(usersTable).values({ ...seedOwnerUser, pin: hashPin(pin) });
 }
 
 async function orderResponse(order: typeof ordersTable.$inferSelect) {
@@ -204,20 +425,29 @@ async function orderResponse(order: typeof ordersTable.$inferSelect) {
 // ---------------------------------------------------------------------------
 
 router.post("/auth/login", async (req, res): Promise<void> => {
-  await ensureSeedUser();
+  const loginKey = req.ip ?? req.socket.remoteAddress ?? "unknown";
+  if (loginIsBlocked(loginKey)) {
+    res.status(429).json({ error: "Too many failed PIN attempts. Try again in 15 minutes." });
+    return;
+  }
   const parsed = LoginBody.safeParse(req.body);
   if (!parsed.success) {
+    recordFailedLogin(loginKey);
     res.status(400).json({ error: "Invalid PIN format" });
     return;
   }
-  const [user] = await db
+  await ensureSeedUser();
+  const activeUsers = await db
     .select()
     .from(usersTable)
-    .where(and(eq(usersTable.pin, parsed.data.pin), eq(usersTable.isActive, true)));
+    .where(eq(usersTable.isActive, true));
+  const user = activeUsers.find((candidate) => verifyPin(parsed.data.pin, candidate.pin));
   if (!user) {
+    recordFailedLogin(loginKey);
     res.status(401).json({ error: "Incorrect or inactive PIN" });
     return;
   }
+  clearFailedLogins(loginKey);
   const [role] = await db
     .select()
     .from(userRolesTable)
@@ -226,10 +456,34 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     res.status(500).json({ error: "User role is not configured" });
     return;
   }
+  await revokeSession(req, res);
+  await createSession(user.id, res);
   res.json(LoginResponse.parse({ user: userResponse(user, role) }));
 });
 
-router.get("/users", async (_req, res): Promise<void> => {
+router.get("/auth/session", requireAuth, async (_req, res): Promise<void> => {
+  const user = getAuthenticatedUser(res);
+  if (!user) {
+    res.status(401).json({ error: "Authentication required" });
+    return;
+  }
+  const [account] = await db.select().from(usersTable).where(eq(usersTable.id, user.id));
+  const [role] = await db.select().from(userRolesTable).where(eq(userRolesTable.code, user.role));
+  if (!account || !role) {
+    res.status(401).json({ error: "Session is no longer valid" });
+    return;
+  }
+  res.json(LoginResponse.parse({ user: userResponse(account, role) }));
+});
+
+router.post("/auth/logout", requireAuth, async (req, res): Promise<void> => {
+  await revokeSession(req, res);
+  res.status(204).end();
+});
+
+router.use(requireAuth);
+
+router.get("/users", requirePermission("manage-staff"), async (_req, res): Promise<void> => {
   await ensureSeedUser();
   const users = await db.select().from(usersTable).orderBy(usersTable.id);
   const roles = await db.select().from(userRolesTable);
@@ -242,7 +496,7 @@ router.get("/users", async (_req, res): Promise<void> => {
   res.json(ListUsersResponse.parse(responses));
 });
 
-router.post("/users", async (req, res): Promise<void> => {
+router.post("/users", requirePermission("manage-staff"), async (req, res): Promise<void> => {
   await ensureSeedRoles();
   const parsed = CreateUserBody.safeParse(req.body);
   if (!parsed.success) {
@@ -261,24 +515,28 @@ router.post("/users", async (req, res): Promise<void> => {
     .insert(usersTable)
     .values({
       name: parsed.data.name,
-      pin: parsed.data.pin,
+      pin: hashPin(parsed.data.pin),
       role: parsed.data.role,
     })
     .returning();
   res.status(201).json(CreateUserResponse.parse(userResponse(created, role)));
 });
 
-router.get("/roles", async (_req, res): Promise<void> => {
+router.get("/roles", requireOwner, async (_req, res): Promise<void> => {
   await ensureSeedRoles();
   const roles = await db.select().from(userRolesTable).orderBy(userRolesTable.name);
   res.json(ListRolesResponse.parse(roles.map(roleResponse)));
 });
 
-router.post("/roles", async (req, res): Promise<void> => {
+router.post("/roles", requireOwner, async (req, res): Promise<void> => {
   await ensureSeedRoles();
   const parsed = CreateRoleBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  if (parsed.data.permissions.includes("costing")) {
+    res.status(400).json({ error: "Costs & Calculator access is reserved for the built-in Manager role." });
     return;
   }
   const name = parsed.data.name.trim();
@@ -310,7 +568,7 @@ router.post("/roles", async (req, res): Promise<void> => {
   res.status(201).json(CreateRoleResponse.parse(roleResponse(created)));
 });
 
-router.patch("/users/:id", async (req, res): Promise<void> => {
+router.patch("/users/:id", requirePermission("manage-staff"), async (req, res): Promise<void> => {
   await ensureSeedRoles();
   const params = UpdateUserParams.safeParse(req.params);
   const body = UpdateUserBody.safeParse(req.body);
@@ -332,7 +590,7 @@ router.patch("/users/:id", async (req, res): Promise<void> => {
     .update(usersTable)
     .set({
       ...(body.data.name === undefined ? {} : { name: body.data.name }),
-      ...(body.data.pin === undefined ? {} : { pin: body.data.pin }),
+      ...(body.data.pin === undefined ? {} : { pin: hashPin(body.data.pin) }),
       ...(body.data.role === undefined ? {} : { role: body.data.role }),
       ...(body.data.isActive === undefined ? {} : { isActive: body.data.isActive }),
     })
@@ -341,6 +599,15 @@ router.patch("/users/:id", async (req, res): Promise<void> => {
   if (!updated) {
     res.status(404).json({ error: "User not found" });
     return;
+  }
+  if (
+    body.data.pin !== undefined ||
+    body.data.role !== undefined ||
+    body.data.isActive === false
+  ) {
+    await db
+      .delete(authSessionsTable)
+      .where(eq(authSessionsTable.userId, updated.id));
   }
   const [role] = await db
     .select()
@@ -363,7 +630,7 @@ router.get("/products", async (_req, res): Promise<void> => {
   res.json(ListProductsResponse.parse(products.map(productResponse)));
 });
 
-router.post("/products", async (req, res): Promise<void> => {
+router.post("/products", requireOwner, async (req, res): Promise<void> => {
   const parsed = CreateProductBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -387,12 +654,26 @@ router.post("/products", async (req, res): Promise<void> => {
   res.status(201).json(CreateProductResponse.parse(productResponse(created)));
 });
 
-router.patch("/products/:id", async (req, res): Promise<void> => {
+router.patch("/products/:id", requirePermission("configure-prices"), async (req, res): Promise<void> => {
   const params = UpdateProductParams.safeParse(req.params);
   const body = UpdateProductBody.safeParse(req.body);
   if (!params.success || !body.success) {
     res.status(400).json({ error: "Invalid product update" });
     return;
+  }
+  if (body.data.price !== undefined && getAuthenticatedUser(res)?.role !== "owner") {
+    const [existingProduct] = await db
+      .select({ price: productsTable.price })
+      .from(productsTable)
+      .where(eq(productsTable.id, params.data.id));
+    if (!existingProduct) {
+      res.status(404).json({ error: "Product not found" });
+      return;
+    }
+    if (money(existingProduct.price) !== body.data.price) {
+      res.status(403).json({ error: "Only Owner/Admin can publish menu prices" });
+      return;
+    }
   }
   const [updated] = await db
     .update(productsTable)
@@ -419,7 +700,7 @@ router.patch("/products/:id", async (req, res): Promise<void> => {
   res.json(UpdateProductResponse.parse(productResponse(updated)));
 });
 
-router.delete("/products/:id", async (req, res): Promise<void> => {
+router.delete("/products/:id", requirePermission("configure-prices"), async (req, res): Promise<void> => {
   const params = ArchiveProductParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: "Invalid product ID" });
@@ -441,7 +722,7 @@ router.delete("/products/:id", async (req, res): Promise<void> => {
 // Orders & Void Requests Routes
 // ---------------------------------------------------------------------------
 
-router.post("/orders", async (req, res): Promise<void> => {
+router.post("/orders", requirePermission("counter"), async (req, res): Promise<void> => {
   const parsed = CreateOrderBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -560,7 +841,7 @@ router.post("/orders", async (req, res): Promise<void> => {
     .json(CreateOrderResponse.parse(await orderResponse(result.order)));
 });
 
-router.get("/orders", async (req, res): Promise<void> => {
+router.get("/orders", requirePermission("orders"), async (req, res): Promise<void> => {
   const parsed = ListOrdersQueryParams.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -575,7 +856,7 @@ router.get("/orders", async (req, res): Promise<void> => {
   res.json(ListOrdersResponse.parse(response));
 });
 
-router.post("/orders/:id/void-request", async (req, res): Promise<void> => {
+router.post("/orders/:id/void-request", requirePermission("orders"), async (req, res): Promise<void> => {
   const params = CreateVoidRequestParams.safeParse(req.params);
   const body = CreateVoidRequestBody.safeParse(req.body);
   if (!params.success || !body.success) {
@@ -613,7 +894,7 @@ router.post("/orders/:id/void-request", async (req, res): Promise<void> => {
   );
 });
 
-router.get("/void-requests", async (_req, res): Promise<void> => {
+router.get("/void-requests", requireOwner, async (_req, res): Promise<void> => {
   const requests = await db
     .select()
     .from(voidRequestsTable)
@@ -642,7 +923,7 @@ router.get("/void-requests", async (_req, res): Promise<void> => {
   res.json(ListVoidRequestsResponse.parse(response));
 });
 
-router.post("/void-requests/:id/approve", async (req, res): Promise<void> => {
+router.post("/void-requests/:id/approve", requireOwner, async (req, res): Promise<void> => {
   const params = ApproveVoidRequestParams.safeParse(req.params);
   const body = ApproveVoidRequestBody.safeParse(req.body);
   if (!params.success || !body.success) {
@@ -735,7 +1016,7 @@ router.get("/store-profile", async (_req, res): Promise<void> => {
   res.json(GetStoreProfileResponse.parse(profile));
 });
 
-router.put("/store-profile", async (req, res): Promise<void> => {
+router.put("/store-profile", requirePermission("settings"), async (req, res): Promise<void> => {
   const body = UpdateStoreProfileBody.safeParse(req.body);
   if (!body.success) {
     res.status(400).json({ error: body.error.message });
@@ -762,7 +1043,7 @@ router.put("/store-profile", async (req, res): Promise<void> => {
 // Dashboard & Operations Routes
 // ---------------------------------------------------------------------------
 
-router.get("/dashboard/summary", async (_req, res): Promise<void> => {
+router.get("/dashboard/summary", requirePermission("dashboard"), async (_req, res): Promise<void> => {
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
   const orders = await db
@@ -797,7 +1078,7 @@ router.get("/dashboard/summary", async (_req, res): Promise<void> => {
   res.json(GetDashboardSummaryResponse.parse(response));
 });
 
-router.post("/operations/production", async (req, res): Promise<void> => {
+router.post("/operations/production", requirePermission("kitchen"), async (req, res): Promise<void> => {
   const parsed = CreateProductionLogBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -815,7 +1096,19 @@ router.post("/operations/production", async (req, res): Promise<void> => {
     res.status(409).json({ error: "Archived products cannot receive new production batches" });
     return;
   }
-  const created = await db.transaction(async (tx) => {
+  let created: typeof operationLogsTable.$inferSelect;
+  try {
+    created = await db.transaction(async (tx) => {
+    const recipe = await tx
+      .select()
+      .from(recipeIngredientsTable)
+      .where(eq(recipeIngredientsTable.productId, product.id))
+      .orderBy(recipeIngredientsTable.id);
+    if (recipe.some((line) => line.ingredientId === null)) {
+      throw new IngredientShortageError(
+        "Link every recipe ingredient to the inventory catalog before logging production.",
+      );
+    }
     const [log] = await tx
       .insert(operationLogsTable)
       .values({
@@ -826,12 +1119,67 @@ router.post("/operations/production", async (req, res): Promise<void> => {
         productId: product.id,
       })
       .returning();
+      const userId = getAuthenticatedUser(res)?.id ?? null;
+      for (const line of recipe) {
+      const requiredQuantity = money(line.quantity) * parsed.data.servings;
+      if (requiredQuantity <= 0) continue;
+      const lots = await tx
+        .select()
+        .from(inventoryLotsTable)
+        .where(
+          and(
+            eq(inventoryLotsTable.ingredientId, line.ingredientId!),
+            gt(inventoryLotsTable.quantityRemaining, "0"),
+          ),
+        )
+        .orderBy(asc(inventoryLotsTable.purchasedAt), asc(inventoryLotsTable.id))
+        .for("update");
+      const availableQuantity = lots.reduce((sum, lot) => sum + money(lot.quantityRemaining), 0);
+      if (availableQuantity + 0.0005 < requiredQuantity) {
+        const [ingredient] = await tx
+          .select({ name: ingredientsTable.name, baseUnit: ingredientsTable.baseUnit })
+          .from(ingredientsTable)
+          .where(eq(ingredientsTable.id, line.ingredientId!));
+        throw new IngredientShortageError(
+          `Not enough ${ingredient?.name ?? line.name} for this batch. Required ${requiredQuantity.toFixed(3)} ${line.unit}; ${availableQuantity.toFixed(3)} ${ingredient?.baseUnit ?? line.unit} available.`,
+        );
+      }
+      let remaining = requiredQuantity;
+      for (const lot of lots) {
+        if (remaining <= 0.0005) break;
+        const lotRemaining = money(lot.quantityRemaining);
+        const consumed = Math.min(lotRemaining, remaining);
+        if (consumed <= 0) continue;
+        await tx
+          .update(inventoryLotsTable)
+          .set({ quantityRemaining: (lotRemaining - consumed).toFixed(3) })
+          .where(eq(inventoryLotsTable.id, lot.id));
+        await tx.insert(inventoryMovementsTable).values({
+          ingredientId: line.ingredientId!,
+          lotId: lot.id,
+          movementType: "production",
+          quantityDelta: (-consumed).toFixed(3),
+          unitCost: lot.unitCost,
+          productionLogId: log.id,
+          notes: `Used for ${parsed.data.servings} servings of ${product.name}`,
+          recordedByUserId: userId,
+        });
+        remaining -= consumed;
+      }
+      }
     await tx
       .update(productsTable)
       .set({ stockCount: sql`${productsTable.stockCount} + ${parsed.data.servings}` })
       .where(eq(productsTable.id, product.id));
     return log;
-  });
+    });
+  } catch (error) {
+    if (error instanceof IngredientShortageError) {
+      res.status(409).json({ error: error.message });
+      return;
+    }
+    throw error;
+  }
   res.status(201).json(
     CreateProductionLogResponse.parse({
       id: String(created.id),
@@ -843,7 +1191,438 @@ router.post("/operations/production", async (req, res): Promise<void> => {
   );
 });
 
-router.get("/operations/expenses", async (_req, res): Promise<void> => {
+router.get("/inventory/ingredients", requirePermission("purchasing", "costing"), async (_req, res): Promise<void> => {
+  const ingredients = await db.select().from(ingredientsTable).orderBy(asc(ingredientsTable.name));
+  const result = await Promise.all(ingredients.map((ingredient) => inventoryIngredientResponse(ingredient.id)));
+  res.json(ListInventoryIngredientsResponse.parse(result.filter((item) => item !== null)));
+});
+
+router.post("/inventory/ingredients", requirePermission("purchasing", "costing"), async (req, res): Promise<void> => {
+  const parsed = CreateInventoryIngredientBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const [created] = await db
+    .insert(ingredientsTable)
+    .values({ name: parsed.data.name.trim(), baseUnit: parsed.data.baseUnit })
+    .onConflictDoNothing({ target: ingredientsTable.name })
+    .returning({ id: ingredientsTable.id });
+  if (!created) {
+    res.status(409).json({ error: "An ingredient with this name already exists." });
+    return;
+  }
+  const response = await inventoryIngredientResponse(created.id);
+  if (!response) throw new Error("Created ingredient could not be reloaded.");
+  res.status(201).json(CreateInventoryIngredientResponse.parse(response));
+});
+
+router.post("/inventory/receipts", requirePermission("purchasing", "costing"), async (req, res): Promise<void> => {
+  const parsed = CreateInventoryReceiptBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const [ingredient] = await db
+    .select()
+    .from(ingredientsTable)
+    .where(eq(ingredientsTable.id, parsed.data.ingredientId));
+  if (!ingredient) {
+    res.status(404).json({ error: "Ingredient not found." });
+    return;
+  }
+  const conversion = purchaseUnitConversions[parsed.data.unit];
+  if (conversion.baseUnit !== ingredient.baseUnit) {
+    res.status(400).json({ error: `Unit ${parsed.data.unit} is incompatible with ${ingredient.baseUnit}.` });
+    return;
+  }
+  const receivedQuantity = Number((parsed.data.quantity * conversion.factor).toFixed(3));
+  if (!Number.isFinite(receivedQuantity) || receivedQuantity <= 0) {
+    res.status(400).json({ error: "Purchase quantity is too small or invalid after unit conversion." });
+    return;
+  }
+  const unitCost = parsed.data.totalCost / receivedQuantity;
+  if (!Number.isFinite(unitCost) || unitCost <= 0 || unitCost >= 1_000_000_000) {
+    res.status(400).json({ error: "The purchase total results in an invalid unit cost." });
+    return;
+  }
+  const authenticatedUser = getAuthenticatedUser(res);
+  await db.transaction(async (tx) => {
+    const [expense] = await tx
+      .insert(operationLogsTable)
+      .values({
+        type: "palengke_expense",
+        details: `${parsed.data.quantity} ${parsed.data.unit} ${ingredient.name}`,
+        amount: parsed.data.totalCost.toFixed(2),
+        expenseCategory: "ingredients",
+        supplier: parsed.data.supplier?.trim() || null,
+        notes: parsed.data.notes?.trim() || null,
+        recordedByUserId: authenticatedUser?.id ?? null,
+      })
+      .returning();
+    const [lot] = await tx
+      .insert(inventoryLotsTable)
+      .values({
+        ingredientId: ingredient.id,
+        quantityReceived: receivedQuantity.toFixed(3),
+        quantityRemaining: receivedQuantity.toFixed(3),
+        unitCost: unitCost.toFixed(4),
+        supplier: parsed.data.supplier?.trim() || null,
+        expenseLogId: expense.id,
+        recordedByUserId: authenticatedUser?.id ?? null,
+      })
+      .returning();
+    await tx.insert(inventoryMovementsTable).values({
+      ingredientId: ingredient.id,
+      lotId: lot.id,
+      movementType: "receipt",
+      quantityDelta: receivedQuantity.toFixed(3),
+      unitCost: unitCost.toFixed(4),
+      notes: parsed.data.notes?.trim() || `Purchase expense ${expense.id}`,
+      recordedByUserId: authenticatedUser?.id ?? null,
+    });
+  });
+  const response = await inventoryIngredientResponse(ingredient.id);
+  if (!response) throw new Error("Purchased ingredient could not be reloaded.");
+  res.status(201).json(CreateInventoryReceiptResponse.parse(response));
+});
+
+router.post("/inventory/adjustments", requirePermission("purchasing", "costing"), async (req, res): Promise<void> => {
+  const parsed = CreateInventoryAdjustmentBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const [ingredient] = await db
+    .select()
+    .from(ingredientsTable)
+    .where(eq(ingredientsTable.id, parsed.data.ingredientId));
+  if (!ingredient) {
+    res.status(404).json({ error: "Ingredient not found." });
+    return;
+  }
+  const delta = Number(parsed.data.quantityDelta.toFixed(3));
+  if (!Number.isFinite(delta) || delta === 0) {
+    res.status(400).json({ error: "Adjustment quantity must be non-zero and at least 0.001." });
+    return;
+  }
+  const authenticatedUser = getAuthenticatedUser(res);
+  try {
+    await db.transaction(async (tx) => {
+      const lots = await tx
+        .select()
+        .from(inventoryLotsTable)
+        .where(
+          and(
+            eq(inventoryLotsTable.ingredientId, ingredient.id),
+            gt(inventoryLotsTable.quantityRemaining, "0"),
+          ),
+        )
+        .orderBy(asc(inventoryLotsTable.purchasedAt), asc(inventoryLotsTable.id))
+        .for("update");
+      if (delta > 0) {
+        const [latestLot] = await tx
+          .select({ unitCost: inventoryLotsTable.unitCost })
+          .from(inventoryLotsTable)
+          .where(eq(inventoryLotsTable.ingredientId, ingredient.id))
+          .orderBy(desc(inventoryLotsTable.purchasedAt), desc(inventoryLotsTable.id))
+          .limit(1)
+          .for("update");
+        const latestUnitCost = parsed.data.unitCost ?? money(latestLot?.unitCost);
+        if (latestUnitCost <= 0) {
+          throw new InvalidInventoryAdjustmentError(
+            "Enter a positive unit cost when adding stock without a previous purchase lot.",
+          );
+        }
+        const [lot] = await tx
+          .insert(inventoryLotsTable)
+          .values({
+            ingredientId: ingredient.id,
+            quantityReceived: delta.toFixed(3),
+            quantityRemaining: delta.toFixed(3),
+            unitCost: latestUnitCost.toFixed(4),
+            recordedByUserId: authenticatedUser?.id ?? null,
+          })
+          .returning();
+        await tx.insert(inventoryMovementsTable).values({
+          ingredientId: ingredient.id,
+          lotId: lot.id,
+          movementType: "adjustment",
+          quantityDelta: delta.toFixed(3),
+          unitCost: latestUnitCost.toFixed(4),
+          notes: parsed.data.notes.trim(),
+          recordedByUserId: authenticatedUser?.id ?? null,
+        });
+        return;
+      }
+      let remaining = Math.abs(delta);
+      const available = lots.reduce((sum, lot) => sum + money(lot.quantityRemaining), 0);
+      if (available + 0.0005 < remaining) {
+        throw new IngredientShortageError(
+          `Cannot remove ${remaining.toFixed(3)} ${ingredient.baseUnit}; only ${available.toFixed(3)} ${ingredient.baseUnit} is available.`,
+        );
+      }
+      for (const lot of lots) {
+        if (remaining <= 0.0005) break;
+        const lotRemaining = money(lot.quantityRemaining);
+        const removed = Math.min(lotRemaining, remaining);
+        if (removed <= 0) continue;
+        await tx
+          .update(inventoryLotsTable)
+          .set({ quantityRemaining: (lotRemaining - removed).toFixed(3) })
+          .where(eq(inventoryLotsTable.id, lot.id));
+        await tx.insert(inventoryMovementsTable).values({
+          ingredientId: ingredient.id,
+          lotId: lot.id,
+          movementType: "adjustment",
+          quantityDelta: (-removed).toFixed(3),
+          unitCost: lot.unitCost,
+          notes: parsed.data.notes.trim(),
+          recordedByUserId: authenticatedUser?.id ?? null,
+        });
+        remaining -= removed;
+      }
+    });
+  } catch (error) {
+    if (error instanceof InvalidInventoryAdjustmentError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+    if (error instanceof IngredientShortageError) {
+      res.status(409).json({ error: error.message });
+      return;
+    }
+    throw error;
+  }
+  const response = await inventoryIngredientResponse(ingredient.id);
+  if (!response) throw new Error("Adjusted ingredient could not be reloaded.");
+  res.json(CreateInventoryAdjustmentResponse.parse(response));
+});
+
+router.get("/costing/products/:productId", requireOwnerOrManager, async (req, res): Promise<void> => {
+  const params = UpdateProductCostParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid product ID" });
+    return;
+  }
+  const [product] = await db
+    .select({ id: productsTable.id })
+    .from(productsTable)
+    .where(eq(productsTable.id, params.data.productId));
+  if (!product) {
+    res.status(404).json({ error: "Product not found" });
+    return;
+  }
+  res.json(GetProductCostResponse.parse(await productCostResponse(product.id)));
+});
+
+router.put("/costing/products/:productId", requireOwnerOrManager, async (req, res): Promise<void> => {
+  const params = UpdateProductCostParams.safeParse(req.params);
+  const body = UpdateProductCostBody.safeParse(req.body);
+  if (!params.success || !body.success) {
+    res.status(400).json({ error: "Invalid product cost data" });
+    return;
+  }
+  const [product] = await db
+    .select({ id: productsTable.id })
+    .from(productsTable)
+    .where(eq(productsTable.id, params.data.productId));
+  if (!product) {
+    res.status(404).json({ error: "Product not found" });
+    return;
+  }
+  const linkedIngredientIds = body.data.ingredients
+    .map((ingredient) => ingredient.ingredientId)
+    .filter((ingredientId): ingredientId is number => ingredientId !== undefined && ingredientId !== null);
+  if (new Set(linkedIngredientIds).size !== linkedIngredientIds.length) {
+    res.status(400).json({ error: "Each inventory ingredient can appear only once in a recipe." });
+    return;
+  }
+  if (linkedIngredientIds.length > 0) {
+    const catalogIngredients = await db
+      .select()
+      .from(ingredientsTable)
+      .where(inArray(ingredientsTable.id, linkedIngredientIds));
+    const catalogById = new Map(catalogIngredients.map((ingredient) => [ingredient.id, ingredient]));
+    const invalidLine = body.data.ingredients.find(
+      (line) =>
+        line.ingredientId !== undefined &&
+        line.ingredientId !== null &&
+        (!catalogById.has(line.ingredientId) || catalogById.get(line.ingredientId)?.baseUnit !== line.unit),
+    );
+    if (invalidLine) {
+      res.status(400).json({ error: `Ingredient ${invalidLine.name} does not match an inventory ingredient and its base unit.` });
+      return;
+    }
+  }
+  await db.transaction(async (tx) => {
+    await tx
+      .insert(productCostProfilesTable)
+      .values({
+        productId: product.id,
+        packagingCost: body.data.packagingCost.toFixed(2),
+        laborCost: body.data.laborCost.toFixed(2),
+        overheadCost: body.data.overheadCost.toFixed(2),
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: productCostProfilesTable.productId,
+        set: {
+          packagingCost: body.data.packagingCost.toFixed(2),
+          laborCost: body.data.laborCost.toFixed(2),
+          overheadCost: body.data.overheadCost.toFixed(2),
+          updatedAt: new Date(),
+        },
+      });
+    await tx.delete(recipeIngredientsTable).where(eq(recipeIngredientsTable.productId, product.id));
+    if (body.data.ingredients.length > 0) {
+      await tx.insert(recipeIngredientsTable).values(body.data.ingredients.map((ingredient) => ({
+        productId: product.id,
+        ingredientId: ingredient.ingredientId ?? null,
+        name: ingredient.name.trim(),
+        quantity: ingredient.quantity.toFixed(3),
+        unit: ingredient.unit.trim(),
+        unitCost: ingredient.unitCost.toFixed(2),
+      })));
+    }
+  });
+  res.json(UpdateProductCostResponse.parse(await productCostResponse(product.id)));
+});
+
+router.get("/costing/proposals", requireOwnerOrManager, async (_req, res): Promise<void> => {
+  res.json(ListPriceProposalsResponse.parse(await priceProposalResponses()));
+});
+
+router.post("/costing/proposals", requireOwnerOrManager, async (_req, res): Promise<void> => {
+  const body = CreatePriceProposalBody.safeParse(_req.body);
+  if (!body.success) {
+    res.status(400).json({ error: body.error.message });
+    return;
+  }
+  const targetValue = body.data.targetValue;
+  if (
+    (body.data.pricingMethod === "margin" && targetValue >= 0.95) ||
+    (body.data.pricingMethod === "markup" && targetValue > 5)
+  ) {
+    res.status(400).json({ error: body.data.pricingMethod === "margin"
+      ? "Target margin must be less than 95%."
+      : "Markup cannot exceed 500%." });
+    return;
+  }
+  const [product] = await db
+    .select()
+    .from(productsTable)
+    .where(eq(productsTable.id, body.data.productId));
+  if (!product || product.isArchived) {
+    res.status(404).json({ error: "Active product not found" });
+    return;
+  }
+  const costs = await productCostResponse(product.id);
+  const ingredientCost = costs.ingredients.reduce(
+    (sum, ingredient) => sum + ingredient.quantity * ingredient.unitCost,
+    0,
+  );
+  const costPerServing = Number(
+    (ingredientCost + costs.packagingCost + costs.laborCost + costs.overheadCost).toFixed(2),
+  );
+  if (costPerServing <= 0) {
+    res.status(400).json({ error: "Add recipe or per-serving costs before calculating a price." });
+    return;
+  }
+  const rawPrice = body.data.pricingMethod === "margin"
+    ? costPerServing / (1 - targetValue)
+    : costPerServing * (1 + targetValue);
+  const proposedPrice = Number(rawPrice.toFixed(2));
+  if (!Number.isFinite(proposedPrice) || proposedPrice <= 0 || proposedPrice > 99_999_999.99) {
+    res.status(400).json({ error: "Calculated price is outside the supported range." });
+    return;
+  }
+  const authenticatedUser = getAuthenticatedUser(res);
+  if (!authenticatedUser) {
+    res.status(401).json({ error: "Authentication required" });
+    return;
+  }
+  const [created] = await db
+    .insert(priceProposalsTable)
+    .values({
+      productId: product.id,
+      currentPrice: product.price,
+      costPerServing: costPerServing.toFixed(2),
+      pricingMethod: body.data.pricingMethod,
+      targetValue: targetValue.toFixed(4),
+      proposedPrice: proposedPrice.toFixed(2),
+      submittedByUserId: authenticatedUser.id,
+    })
+    .returning();
+  const [result] = await priceProposalResponses().then((proposals) => proposals.filter((proposal) => proposal.id === created.id));
+  if (!result) throw new Error(`Created price proposal ${created.id} could not be read back`);
+  res.status(201).json(CreatePriceProposalResponse.parse(result));
+});
+
+router.patch("/costing/proposals/:id", requireOwner, async (req, res): Promise<void> => {
+  const params = ReviewPriceProposalParams.safeParse(req.params);
+  const body = ReviewPriceProposalBody.safeParse(req.body);
+  if (!params.success || !body.success) {
+    res.status(400).json({ error: "Invalid proposal review" });
+    return;
+  }
+  const authenticatedUser = getAuthenticatedUser(res);
+  if (!authenticatedUser) {
+    res.status(401).json({ error: "Authentication required" });
+    return;
+  }
+  const result = await db.transaction(async (tx) => {
+    const [proposal] = await tx
+      .select()
+      .from(priceProposalsTable)
+      .where(eq(priceProposalsTable.id, params.data.id));
+    if (!proposal) return { kind: "missing" as const };
+    if (proposal.status !== "pending") return { kind: "reviewed" as const };
+    if (body.data.decision === "approve") {
+      const [published] = await tx
+        .update(productsTable)
+        .set({ price: proposal.proposedPrice })
+        .where(and(
+          eq(productsTable.id, proposal.productId),
+          eq(productsTable.price, proposal.currentPrice),
+          eq(productsTable.isArchived, false),
+        ))
+        .returning({ id: productsTable.id });
+      if (!published) return { kind: "stale" as const };
+    }
+    const [reviewedProposal] = await tx
+      .update(priceProposalsTable)
+      .set({
+        status: body.data.decision === "approve" ? "approved" : "rejected",
+        reviewedByUserId: authenticatedUser.id,
+        reviewedAt: new Date(),
+      })
+      .where(and(
+        eq(priceProposalsTable.id, proposal.id),
+        eq(priceProposalsTable.status, "pending"),
+      ))
+      .returning({ id: priceProposalsTable.id });
+    if (!reviewedProposal) return { kind: "reviewed" as const };
+    return { kind: "updated" as const };
+  });
+  if (result.kind === "missing") {
+    res.status(404).json({ error: "Price proposal not found" });
+    return;
+  }
+  if (result.kind === "reviewed") {
+    res.status(409).json({ error: "This proposal has already been reviewed" });
+    return;
+  }
+  if (result.kind === "stale") {
+    res.status(409).json({ error: "The menu price changed since this suggestion was created. Submit a fresh suggestion before publishing." });
+    return;
+  }
+  const [updated] = await priceProposalResponses().then((proposals) => proposals.filter((proposal) => proposal.id === params.data.id));
+  if (!updated) throw new Error(`Reviewed price proposal ${params.data.id} could not be read back`);
+  res.json(ReviewPriceProposalResponse.parse(updated));
+});
+
+router.get("/operations/expenses", requirePermission("purchasing", "costing"), async (_req, res): Promise<void> => {
   const logs = await db
     .select()
     .from(operationLogsTable)
@@ -858,23 +1637,35 @@ router.get("/operations/expenses", async (_req, res): Promise<void> => {
         details: log.details,
         amount: money(log.amount),
         createdAt: log.createdAt.toISOString(),
+        category: log.expenseCategory,
+        supplier: log.supplier,
+        notes: log.notes,
       })),
     ),
   );
 });
 
-router.post("/operations/expenses", async (req, res): Promise<void> => {
+router.post("/operations/expenses", requirePermission("purchasing", "costing"), async (req, res): Promise<void> => {
   const parsed = CreateExpenseLogBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
+  if (!Number.isFinite(parsed.data.amount) || parsed.data.amount <= 0) {
+    res.status(400).json({ error: "Expense amount must be greater than zero." });
+    return;
+  }
+  const authenticatedUser = getAuthenticatedUser(res);
   const [created] = await db
     .insert(operationLogsTable)
     .values({
       type: "palengke_expense",
-      details: `${parsed.data.details}${parsed.data.category ? ` · ${parsed.data.category}` : ""}`,
+      details: parsed.data.details.trim(),
       amount: parsed.data.amount.toFixed(2),
+      expenseCategory: parsed.data.category ?? "other",
+      supplier: parsed.data.supplier?.trim() || null,
+      notes: parsed.data.notes?.trim() || null,
+      recordedByUserId: authenticatedUser?.id ?? null,
     })
     .returning();
   res.status(201).json(
@@ -884,8 +1675,212 @@ router.post("/operations/expenses", async (req, res): Promise<void> => {
       details: created.details,
       amount: money(created.amount),
       createdAt: created.createdAt.toISOString(),
+      category: created.expenseCategory,
+      supplier: created.supplier,
+      notes: created.notes,
     }),
   );
+});
+
+router.get("/operations/market-runs", requirePermission("purchasing", "costing"), async (_req, res): Promise<void> => {
+  const runs = await db
+    .select()
+    .from(marketRunsTable)
+    .orderBy(desc(marketRunsTable.createdAt))
+    .limit(50);
+
+  const runIds = runs.map((r) => r.id);
+  const items = runIds.length > 0
+    ? await db
+        .select()
+        .from(marketRunItemsTable)
+        .where(inArray(marketRunItemsTable.marketRunId, runIds))
+    : [];
+
+  const itemsByRunId = new Map<number, typeof items>();
+  for (const item of items) {
+    const list = itemsByRunId.get(item.marketRunId) ?? [];
+    list.push(item);
+    itemsByRunId.set(item.marketRunId, list);
+  }
+
+  const responses = runs.map((run) => {
+    const runItems = itemsByRunId.get(run.id) ?? [];
+    return {
+      id: run.id,
+      supplier: run.supplier,
+      totalItemsCost: money(run.totalItemsCost),
+      deliveryFee: money(run.deliveryFee),
+      totalAmount: money(run.totalAmount),
+      notes: run.notes,
+      createdAt: run.createdAt.toISOString(),
+      items: runItems.map((item) => ({
+        id: item.id,
+        ingredientId: item.ingredientId,
+        itemType: item.itemType as "major_ingredient" | "pantry_item" | "utility_lpg" | "other_expense",
+        name: item.name,
+        quantity: money(item.quantity),
+        unit: item.unit,
+        baseCost: money(item.baseCost),
+        allocatedDeliveryCost: money(item.allocatedDeliveryCost),
+        landedUnitCost: money(item.landedUnitCost),
+      })),
+    };
+  });
+
+  res.json(ListMarketRunsResponse.parse(responses));
+});
+
+router.post("/operations/market-runs", requirePermission("purchasing", "costing"), async (req, res): Promise<void> => {
+  const parsed = CreateMarketRunBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+
+  const deliveryFee = parsed.data.deliveryFee ?? 0;
+  const items = parsed.data.items;
+
+  if (items.length === 0) {
+    res.status(400).json({ error: "Market run must contain at least one item." });
+    return;
+  }
+
+  const majorItems = items.filter((item) => item.itemType === "major_ingredient");
+  const totalMajorItemsCost = majorItems.reduce((sum, item) => sum + item.totalCost, 0);
+
+  const totalItemsCost = items.reduce((sum, item) => sum + item.totalCost, 0);
+  const grandTotal = totalItemsCost + deliveryFee;
+
+  const authenticatedUser = getAuthenticatedUser(res);
+
+  const createdRun = await db.transaction(async (tx) => {
+    const [expenseLog] = await tx
+      .insert(operationLogsTable)
+      .values({
+        type: "palengke_expense",
+        details: `Palengke Run: ${items.length} items (${items.map((i) => i.name).join(", ")})`,
+        amount: grandTotal.toFixed(2),
+        expenseCategory: "ingredients",
+        supplier: parsed.data.supplier?.trim() || null,
+        notes: parsed.data.notes?.trim() || null,
+        recordedByUserId: authenticatedUser?.id ?? null,
+      })
+      .returning();
+
+    const [marketRun] = await tx
+      .insert(marketRunsTable)
+      .values({
+        supplier: parsed.data.supplier?.trim() || null,
+        totalItemsCost: totalItemsCost.toFixed(2),
+        deliveryFee: deliveryFee.toFixed(2),
+        totalAmount: grandTotal.toFixed(2),
+        expenseLogId: expenseLog.id,
+        notes: parsed.data.notes?.trim() || null,
+        recordedByUserId: authenticatedUser?.id ?? null,
+      })
+      .returning();
+
+    const createdItems: Array<typeof marketRunItemsTable.$inferSelect> = [];
+
+    for (const item of items) {
+      let allocatedDelivery = 0;
+      if (item.itemType === "major_ingredient" && totalMajorItemsCost > 0 && deliveryFee > 0) {
+        allocatedDelivery = (item.totalCost / totalMajorItemsCost) * deliveryFee;
+      }
+
+      const totalLandedCost = item.totalCost + allocatedDelivery;
+
+      let receivedQuantity = item.quantity;
+      let ingredientObj: typeof ingredientsTable.$inferSelect | undefined;
+
+      if (item.ingredientId) {
+        const [found] = await tx
+          .select()
+          .from(ingredientsTable)
+          .where(eq(ingredientsTable.id, item.ingredientId));
+        if (found) {
+          ingredientObj = found;
+          const conv = purchaseUnitConversions[item.unit as keyof typeof purchaseUnitConversions];
+          if (conv && conv.baseUnit === found.baseUnit) {
+            receivedQuantity = item.quantity * conv.factor;
+          }
+        }
+      }
+
+      const landedUnitCost = receivedQuantity > 0 ? totalLandedCost / receivedQuantity : 0;
+
+      let createdLotId: number | null = null;
+
+      if (ingredientObj) {
+        const [lot] = await tx
+          .insert(inventoryLotsTable)
+          .values({
+            ingredientId: ingredientObj.id,
+            quantityReceived: receivedQuantity.toFixed(3),
+            quantityRemaining: receivedQuantity.toFixed(3),
+            unitCost: landedUnitCost.toFixed(4),
+            supplier: parsed.data.supplier?.trim() || null,
+            expenseLogId: expenseLog.id,
+            recordedByUserId: authenticatedUser?.id ?? null,
+          })
+          .returning();
+
+        createdLotId = lot.id;
+
+        await tx.insert(inventoryMovementsTable).values({
+          ingredientId: ingredientObj.id,
+          lotId: lot.id,
+          movementType: "receipt",
+          quantityDelta: receivedQuantity.toFixed(3),
+          unitCost: landedUnitCost.toFixed(4),
+          notes: `Palengke Run ${marketRun.id} - ${item.name}`,
+          recordedByUserId: authenticatedUser?.id ?? null,
+        });
+      }
+
+      const [runItem] = await tx
+        .insert(marketRunItemsTable)
+        .values({
+          marketRunId: marketRun.id,
+          ingredientId: item.ingredientId ?? null,
+          itemType: item.itemType,
+          name: item.name,
+          quantity: item.quantity.toFixed(3),
+          unit: item.unit,
+          baseCost: item.totalCost.toFixed(2),
+          allocatedDeliveryCost: allocatedDelivery.toFixed(2),
+          landedUnitCost: landedUnitCost.toFixed(4),
+          inventoryLotId: createdLotId,
+        })
+        .returning();
+
+      createdItems.push(runItem);
+    }
+
+    return {
+      id: marketRun.id,
+      supplier: marketRun.supplier,
+      totalItemsCost: money(marketRun.totalItemsCost),
+      deliveryFee: money(marketRun.deliveryFee),
+      totalAmount: money(marketRun.totalAmount),
+      notes: marketRun.notes,
+      createdAt: marketRun.createdAt.toISOString(),
+      items: createdItems.map((item) => ({
+        id: item.id,
+        ingredientId: item.ingredientId,
+        itemType: item.itemType as "major_ingredient" | "pantry_item" | "utility_lpg" | "other_expense",
+        name: item.name,
+        quantity: money(item.quantity),
+        unit: item.unit,
+        baseCost: money(item.baseCost),
+        allocatedDeliveryCost: money(item.allocatedDeliveryCost),
+        landedUnitCost: money(item.landedUnitCost),
+      })),
+    };
+  });
+
+  res.status(201).json(MarketRunResponse.parse(createdRun));
 });
 
 export default router;

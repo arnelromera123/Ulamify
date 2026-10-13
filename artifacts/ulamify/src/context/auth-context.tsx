@@ -1,33 +1,29 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { RolePermission, User, UserRole } from '@workspace/api-client-react';
-import { useLogin } from '@workspace/api-client-react';
-
-const STORAGE_KEY = 'ulamify_active_user';
+import {
+  getGetAuthSessionQueryKey,
+  useGetAuthSession,
+  useLogin,
+  useLogout,
+} from '@workspace/api-client-react';
 
 const legacyRolePermissions: Record<string, RolePermission[]> = {
-  owner: ['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices'],
+  owner: ['counter', 'dashboard', 'orders', 'kitchen', 'purchasing', 'settings', 'manage-staff', 'configure-prices', 'costing'],
+  manager: ['dashboard', 'purchasing', 'costing'],
   cashier: ['counter', 'orders'],
   kitchen: ['kitchen'],
   purchaser: ['purchasing'],
 };
 
-const DEFAULT_OWNER_USER: User = {
-  id: 1,
-  name: 'Owner Admin',
-  role: 'owner' as UserRole,
-  roleName: 'Owner / Admin',
-  permissions: [
-    'counter',
-    'dashboard',
-    'orders',
-    'kitchen',
-    'purchasing',
-    'settings',
-    'manage-staff',
-    'configure-prices',
-  ],
+const SIGNED_OUT_USER: User = {
+  id: 0,
+  name: 'Signed out',
+  role: 'guest' as UserRole,
+  roleName: 'Sign in required',
+  permissions: [],
   isActive: true,
-  createdAt: new Date().toISOString(),
+  createdAt: '',
 };
 
 interface AuthContextType {
@@ -35,7 +31,7 @@ interface AuthContextType {
   isLoginOpen: boolean;
   openLogin: () => void;
   closeLogin: () => void;
-  loginWithPin: (pin: string) => Promise<boolean>;
+  loginWithPin: (pin: string) => Promise<string | null>;
   logout: () => void;
   hasRole: (allowedRoles: UserRole[]) => boolean;
   hasPermission: (permission: RolePermission) => boolean;
@@ -45,45 +41,86 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [currentUser, setCurrentUser] = useState<User>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved) : DEFAULT_OWNER_USER;
-    } catch {
-      return DEFAULT_OWNER_USER;
-    }
+  const queryClient = useQueryClient();
+  const [currentUser, setCurrentUser] = useState<User>(SIGNED_OUT_USER);
+  const [isLoginOpen, setIsLoginOpen] = useState(true);
+  const sessionQuery = useGetAuthSession({
+    query: {
+      queryKey: getGetAuthSessionQueryKey(),
+      retry: false,
+      staleTime: 0,
+    },
   });
-
-  const [isLoginOpen, setIsLoginOpen] = useState(false);
   const loginMutation = useLogin();
+  const logoutMutation = useLogout();
+
+  useEffect(() => {
+    if (sessionQuery.data?.user) {
+      setCurrentUser(sessionQuery.data.user);
+      setIsLoginOpen(false);
+    } else if (sessionQuery.isError) {
+      setCurrentUser(SIGNED_OUT_USER);
+      setIsLoginOpen(true);
+    }
+  }, [sessionQuery.data, sessionQuery.isError]);
+
+  useEffect(() => {
+    const requireSignIn = () => {
+      queryClient.clear();
+      setCurrentUser(SIGNED_OUT_USER);
+      setIsLoginOpen(true);
+    };
+    window.addEventListener('ulamify:auth-required', requireSignIn);
+    return () => window.removeEventListener('ulamify:auth-required', requireSignIn);
+  }, [queryClient]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(currentUser));
+      localStorage.removeItem('ulamify_active_user');
     } catch {
-      // Storage unavailable
+      // Storage may be unavailable.
     }
-  }, [currentUser]);
+  }, []);
 
   const openLogin = () => setIsLoginOpen(true);
-  const closeLogin = () => setIsLoginOpen(false);
+  const closeLogin = () => {
+    if (currentUser.role !== 'guest') setIsLoginOpen(false);
+  };
 
-  const loginWithPin = async (pin: string): Promise<boolean> => {
+  const loginWithPin = async (pin: string): Promise<string | null> => {
     try {
       const res = await loginMutation.mutateAsync({ data: { pin } });
       if (res?.user) {
+        queryClient.setQueryData(getGetAuthSessionQueryKey(), res);
+        void queryClient.invalidateQueries();
         setCurrentUser(res.user);
         setIsLoginOpen(false);
-        return true;
+        return null;
       }
-      return false;
-    } catch {
-      return false;
+      return 'Sign-in did not return a staff account. Try again.';
+    } catch (error) {
+      if (typeof error === 'object' && error !== null) {
+        if ('status' in error && error.status === 429) {
+          return 'Too many failed PIN attempts. Wait 15 minutes before trying again.';
+        }
+        if ('data' in error && typeof error.data === 'object' && error.data !== null &&
+          'error' in error.data && typeof error.data.error === 'string') {
+          return error.data.error;
+        }
+        if ('status' in error && error.status === 401) return 'Invalid staff PIN. Try again.';
+      }
+      return 'Could not reach the sign-in service. Check the connection and try again.';
     }
   };
 
   const logout = () => {
-    setIsLoginOpen(true);
+    logoutMutation.mutate(undefined, {
+      onSuccess: () => {
+        queryClient.clear();
+        setCurrentUser(SIGNED_OUT_USER);
+        setIsLoginOpen(true);
+      },
+    });
   };
 
   const hasRole = (allowedRoles: UserRole[]) => {
@@ -99,6 +136,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (path === '/roles') return currentUser.role === 'owner';
     if (path === '/users') return currentUser.role === 'owner' || hasPermission('manage-staff');
     if (path === '/menu') return hasPermission('configure-prices');
+    if (path === '/costing') return currentUser.role === 'owner' || currentUser.role === 'manager';
     if (path === '/settings') {
       return (['settings', 'manage-staff', 'configure-prices'] as RolePermission[]).some(hasPermission);
     }
@@ -108,6 +146,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       '/orders': 'orders',
       '/kitchen': 'kitchen',
       '/purchasing': 'purchasing',
+      '/inventory': 'purchasing',
     };
     const permission = pathPermissions[path];
     return currentUser.role === 'owner' || (permission !== undefined && hasPermission(permission));

@@ -17,6 +17,8 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+let _sessionEstablished = false;
+let _sessionVersion = 0;
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -359,12 +361,40 @@ export async function customFetch<T = unknown>(
   }
 
   const requestInfo = { method, url: resolveUrl(input) };
+  const requestPath = requestInfo.url.split("?", 1)[0];
+  const requestHadSession = _sessionEstablished;
+  const requestSessionVersion = _sessionVersion;
 
   const response = await fetch(input, { ...init, method, headers });
 
   if (!response.ok) {
+    if (
+      response.status === 401 &&
+      requestHadSession &&
+      requestSessionVersion === _sessionVersion &&
+      _sessionEstablished &&
+      !requestPath.endsWith("/auth/login") &&
+      typeof window !== "undefined"
+    ) {
+      _sessionEstablished = false;
+      _sessionVersion += 1;
+      window.dispatchEvent(new Event("ulamify:auth-required"));
+    }
     const errorData = await parseErrorBody(response, method);
     throw new ApiError(response, errorData, requestInfo);
+  }
+
+  if (requestPath.endsWith("/auth/login")) {
+    _sessionEstablished = true;
+    _sessionVersion += 1;
+  } else if (requestPath.endsWith("/auth/session")) {
+    if (!_sessionEstablished) {
+      _sessionEstablished = true;
+      _sessionVersion += 1;
+    }
+  } else if (requestPath.endsWith("/auth/logout")) {
+    _sessionEstablished = false;
+    _sessionVersion += 1;
   }
 
   return (await parseSuccessBody(response, responseType, requestInfo)) as T;

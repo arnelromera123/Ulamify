@@ -23,6 +23,7 @@ export const RolePermission = {
   settings: 'settings',
   'manage-staff': 'manage-staff',
   'configure-prices': 'configure-prices',
+  costing: 'costing',
 } as const;
 
 export interface Role {
@@ -300,6 +301,16 @@ export interface ExpenseLogInput {
   amount: number;
   details: string;
   category?: ExpenseLogInputCategory;
+  /**
+     * @maxLength 120
+     * @nullable
+     */
+  supplier?: string | null;
+  /**
+     * @maxLength 500
+     * @nullable
+     */
+  notes?: string | null;
 }
 
 export type OperationLogType = typeof OperationLogType[keyof typeof OperationLogType];
@@ -310,12 +321,210 @@ export const OperationLogType = {
   palengke_expense: 'palengke_expense',
 } as const;
 
+/**
+ * @nullable
+ */
+export type OperationLogCategory = typeof OperationLogCategory[keyof typeof OperationLogCategory] | null;
+
+
+export const OperationLogCategory = {
+  ingredients: 'ingredients',
+  supplies: 'supplies',
+  delivery: 'delivery',
+  other: 'other',
+} as const;
+
 export interface OperationLog {
   id: string;
   type: OperationLogType;
   details: string;
   amount: number;
   createdAt: string;
+  /** @nullable */
+  category?: OperationLogCategory;
+  /** @nullable */
+  supplier?: string | null;
+  /** @nullable */
+  notes?: string | null;
+}
+
+export interface RecipeIngredient {
+  /** @nullable */
+  ingredientId?: number | null;
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name: string;
+  /** @exclusiveMinimum 0 */
+  quantity: number;
+  /**
+     * @minLength 1
+     * @maxLength 24
+     */
+  unit: string;
+  /** @minimum 0 */
+  unitCost: number;
+  /** @minimum 0 */
+  availableQuantity?: number;
+  /** @nullable */
+  baseUnit?: string | null;
+}
+
+export type InventoryBaseUnit = typeof InventoryBaseUnit[keyof typeof InventoryBaseUnit];
+
+
+export const InventoryBaseUnit = {
+  g: 'g',
+  ml: 'ml',
+  each: 'each',
+} as const;
+
+export type InventoryPurchaseUnit = typeof InventoryPurchaseUnit[keyof typeof InventoryPurchaseUnit];
+
+
+export const InventoryPurchaseUnit = {
+  g: 'g',
+  kg: 'kg',
+  ml: 'ml',
+  L: 'L',
+  each: 'each',
+} as const;
+
+export interface InventoryIngredient {
+  id: number;
+  name: string;
+  baseUnit: InventoryBaseUnit;
+  /** @minimum 0 */
+  quantityAvailable: number;
+  /** @minimum 0 */
+  latestUnitCost: number;
+}
+
+export interface InventoryIngredientInput {
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name: string;
+  baseUnit: InventoryBaseUnit;
+}
+
+export interface InventoryReceiptInput {
+  /** @minimum 1 */
+  ingredientId: number;
+  /** @exclusiveMinimum 0 */
+  quantity: number;
+  unit: InventoryPurchaseUnit;
+  /** @exclusiveMinimum 0 */
+  totalCost: number;
+  /**
+     * @maxLength 120
+     * @nullable
+     */
+  supplier?: string | null;
+  /**
+     * @maxLength 500
+     * @nullable
+     */
+  notes?: string | null;
+}
+
+export interface InventoryAdjustmentInput {
+  /** @minimum 1 */
+  ingredientId: number;
+  quantityDelta: number;
+  /** @minimum 0 */
+  unitCost?: number;
+  /**
+     * @minLength 1
+     * @maxLength 500
+     */
+  notes: string;
+}
+
+export interface ProductCost {
+  productId: number;
+  ingredients: RecipeIngredient[];
+  packagingCost: number;
+  laborCost: number;
+  overheadCost: number;
+}
+
+export interface ProductCostInput {
+  /** @maxItems 100 */
+  ingredients: RecipeIngredient[];
+  /** @minimum 0 */
+  packagingCost: number;
+  /** @minimum 0 */
+  laborCost: number;
+  /** @minimum 0 */
+  overheadCost: number;
+}
+
+export type PriceProposalInputPricingMethod = typeof PriceProposalInputPricingMethod[keyof typeof PriceProposalInputPricingMethod];
+
+
+export const PriceProposalInputPricingMethod = {
+  margin: 'margin',
+  markup: 'markup',
+} as const;
+
+export interface PriceProposalInput {
+  /** @minimum 1 */
+  productId: number;
+  pricingMethod: PriceProposalInputPricingMethod;
+  /** @exclusiveMinimum 0 */
+  targetValue: number;
+}
+
+export type PriceProposalDecisionDecision = typeof PriceProposalDecisionDecision[keyof typeof PriceProposalDecisionDecision];
+
+
+export const PriceProposalDecisionDecision = {
+  approve: 'approve',
+  reject: 'reject',
+} as const;
+
+export interface PriceProposalDecision {
+  decision: PriceProposalDecisionDecision;
+}
+
+export type PriceProposalPricingMethod = typeof PriceProposalPricingMethod[keyof typeof PriceProposalPricingMethod];
+
+
+export const PriceProposalPricingMethod = {
+  margin: 'margin',
+  markup: 'markup',
+} as const;
+
+export type PriceProposalStatus = typeof PriceProposalStatus[keyof typeof PriceProposalStatus];
+
+
+export const PriceProposalStatus = {
+  pending: 'pending',
+  approved: 'approved',
+  rejected: 'rejected',
+} as const;
+
+export interface PriceProposal {
+  id: number;
+  productId: number;
+  productName: string;
+  currentPrice: number;
+  costPerServing: number;
+  pricingMethod: PriceProposalPricingMethod;
+  targetValue: number;
+  proposedPrice: number;
+  estimatedProfit: number;
+  estimatedMargin: number;
+  status: PriceProposalStatus;
+  submittedBy: string;
+  /** @nullable */
+  reviewedBy: string | null;
+  createdAt: string;
+  /** @nullable */
+  reviewedAt: string | null;
 }
 
 export type ListOrdersParams = {

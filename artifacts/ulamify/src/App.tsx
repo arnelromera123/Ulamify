@@ -6,7 +6,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { AppShell } from '@/components/app-shell';
 import { PinLoginModal } from '@/components/pin-login-modal';
 import { AuthProvider } from '@/context/auth-context';
-import { DashboardPage, KitchenPage, MenuManagementPage, OrdersPage, PosPage, PurchasingPage, RolesPage, SettingsPage, UsersPage } from '@/pages/app-pages';
+import { CostingPage, DashboardPage, KitchenPage, MenuManagementPage, OrdersPage, PosPage, PurchasingPage, InventoryPage, RolesPage, SettingsPage, UsersPage } from '@/pages/app-pages';
 import NotFound from '@/pages/not-found';
 import {
   Route,
@@ -28,6 +28,8 @@ function Router() {
           <Route path="/kitchen" component={KitchenPage} />
           <Route path="/menu" component={MenuManagementPage} />
           <Route path="/purchasing" component={PurchasingPage} />
+          <Route path="/inventory" component={InventoryPage} />
+          <Route path="/costing" component={CostingPage} />
           <Route path="/roles" component={RolesPage} />
           <Route path="/users" component={UsersPage} />
           <Route path="/settings" component={SettingsPage} />

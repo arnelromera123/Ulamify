@@ -5,7 +5,9 @@ import {
   BookOpen,
   ChefHat,
   CircleDollarSign,
+  Calculator,
   ClipboardList,
+  Boxes,
   LayoutGrid,
   Lock,
   MoreHorizontal,
@@ -28,6 +30,8 @@ const navigation = [
   { href: '/kitchen', label: 'Kitchen', icon: ChefHat },
   { href: '/menu', label: 'Menu Management', icon: BookOpen },
   { href: '/purchasing', label: 'Palengke', icon: CircleDollarSign },
+  { href: '/inventory', label: 'Inventory', icon: Boxes },
+  { href: '/costing', label: 'Costs & Pricing', icon: Calculator },
   { href: '/users', label: 'Team Accounts', icon: Users },
   { href: '/roles', label: 'Roles', icon: ShieldCheck },
 ];
@@ -71,6 +75,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const roleLabels: Record<string, { label: string; badgeClass: string }> = {
     owner: { label: '👑 Owner / Admin', badgeClass: 'bg-primary text-primary-foreground' },
+    manager: { label: '🧭 Manager', badgeClass: 'bg-[#e8eaf2] text-[#303952]' },
     cashier: { label: '💻 Cashier', badgeClass: 'bg-[#dcefe9] text-[#176557]' },
     kitchen: { label: '🍳 Kitchen Staff', badgeClass: 'bg-[#fff0dc] text-[#9b5414]' },
     purchaser: { label: '🛒 Purchaser', badgeClass: 'bg-[#ffebe7] text-[#a84335]' },
@@ -145,7 +150,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <div className={`mx-auto max-w-[1500px] ${location === '/' || location === '/dashboard' || location === '/orders' || location === '/kitchen' || location === '/menu' || location === '/users' || location === '/roles' || location === '/settings' ? 'p-3 md:p-9' : 'p-5 md:p-9'}`}>
+        <div className={`mx-auto max-w-[1500px] ${location === '/' || location === '/dashboard' || location === '/orders' || location === '/kitchen' || location === '/menu' || location === '/users' || location === '/roles' || location === '/settings' || location === '/costing' || location === '/purchasing' || location === '/inventory' ? 'p-3 md:p-9' : 'p-5 md:p-9'}`}>
           {isAllowed ? (
             children
           ) : (

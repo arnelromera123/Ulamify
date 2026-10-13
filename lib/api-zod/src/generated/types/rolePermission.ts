@@ -18,4 +18,5 @@ export const RolePermission = {
   settings: 'settings',
   'manage-staff': 'manage-staff',
   'configure-prices': 'configure-prices',
+  costing: 'costing',
 } as const;

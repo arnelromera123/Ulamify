@@ -8,6 +8,7 @@ import {
   text,
   timestamp,
   boolean,
+  index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { z } from "zod/v4";
@@ -69,9 +70,105 @@ export const operationLogsTable = pgTable("operation_logs", {
   amount: numeric("amount", { precision: 10, scale: 2 }).notNull().default("0"),
   servings: integer("servings"),
   productId: integer("product_id").references(() => productsTable.id),
+  expenseCategory: text("expense_category"),
+  supplier: text("supplier"),
+  notes: text("notes"),
+  recordedByUserId: integer("recorded_by_user_id").references(() => usersTable.id),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
+});
+
+export const productCostProfilesTable = pgTable("product_cost_profiles", {
+  productId: integer("product_id")
+    .primaryKey()
+    .references(() => productsTable.id, { onDelete: "cascade" }),
+  packagingCost: numeric("packaging_cost", { precision: 10, scale: 2 }).notNull().default("0"),
+  laborCost: numeric("labor_cost", { precision: 10, scale: 2 }).notNull().default("0"),
+  overheadCost: numeric("overhead_cost", { precision: 10, scale: 2 }).notNull().default("0"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const ingredientsTable = pgTable("ingredients", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  baseUnit: text("base_unit").notNull(),
+  isPantryItem: boolean("is_pantry_item").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const recipeIngredientsTable = pgTable("recipe_ingredients", {
+  id: serial("id").primaryKey(),
+  productId: integer("product_id")
+    .notNull()
+    .references(() => productsTable.id, { onDelete: "cascade" }),
+  ingredientId: integer("ingredient_id").references(() => ingredientsTable.id),
+  name: text("name").notNull(),
+  quantity: numeric("quantity", { precision: 10, scale: 3 }).notNull(),
+  unit: text("unit").notNull(),
+  unitCost: numeric("unit_cost", { precision: 10, scale: 2 }).notNull(),
+});
+
+export const inventoryLotsTable = pgTable(
+  "inventory_lots",
+  {
+    id: serial("id").primaryKey(),
+    ingredientId: integer("ingredient_id")
+      .notNull()
+      .references(() => ingredientsTable.id),
+    quantityReceived: numeric("quantity_received", { precision: 14, scale: 3 }).notNull(),
+    quantityRemaining: numeric("quantity_remaining", { precision: 14, scale: 3 }).notNull(),
+    unitCost: numeric("unit_cost", { precision: 12, scale: 4 }).notNull(),
+    purchasedAt: timestamp("purchased_at", { withTimezone: true }).notNull().defaultNow(),
+    supplier: text("supplier"),
+    expenseLogId: integer("expense_log_id").references(() => operationLogsTable.id),
+    recordedByUserId: integer("recorded_by_user_id").references(() => usersTable.id),
+  },
+  (table) => [
+    index("inventory_lots_fifo_idx").on(table.ingredientId, table.purchasedAt, table.id),
+    uniqueIndex("inventory_lots_expense_log_unique").on(table.expenseLogId),
+  ],
+);
+
+export const inventoryMovementsTable = pgTable(
+  "inventory_movements",
+  {
+    id: serial("id").primaryKey(),
+    ingredientId: integer("ingredient_id")
+      .notNull()
+      .references(() => ingredientsTable.id),
+    lotId: integer("lot_id").references(() => inventoryLotsTable.id),
+    movementType: text("movement_type").notNull(),
+    quantityDelta: numeric("quantity_delta", { precision: 14, scale: 3 }).notNull(),
+    unitCost: numeric("unit_cost", { precision: 12, scale: 4 }).notNull().default("0"),
+    productionLogId: integer("production_log_id").references(() => operationLogsTable.id),
+    notes: text("notes"),
+    recordedByUserId: integer("recorded_by_user_id").references(() => usersTable.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("inventory_movements_ingredient_date_idx").on(table.ingredientId, table.createdAt),
+    index("inventory_movements_production_idx").on(table.productionLogId),
+  ],
+);
+
+export const priceProposalsTable = pgTable("price_proposals", {
+  id: serial("id").primaryKey(),
+  productId: integer("product_id")
+    .notNull()
+    .references(() => productsTable.id, { onDelete: "cascade" }),
+  currentPrice: numeric("current_price", { precision: 10, scale: 2 }).notNull(),
+  costPerServing: numeric("cost_per_serving", { precision: 10, scale: 2 }).notNull(),
+  pricingMethod: text("pricing_method").notNull(),
+  targetValue: numeric("target_value", { precision: 7, scale: 4 }).notNull(),
+  proposedPrice: numeric("proposed_price", { precision: 10, scale: 2 }).notNull(),
+  status: text("status").notNull().default("pending"),
+  submittedByUserId: integer("submitted_by_user_id")
+    .notNull()
+    .references(() => usersTable.id),
+  reviewedByUserId: integer("reviewed_by_user_id").references(() => usersTable.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
 });
 
 export const userRolesTable = pgTable("user_roles", {
@@ -98,6 +195,22 @@ export const usersTable = pgTable("users", {
     .defaultNow(),
 });
 
+export const authSessionsTable = pgTable(
+  "auth_sessions",
+  {
+    id: serial("id").primaryKey(),
+    tokenHash: text("token_hash").notNull(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [uniqueIndex("auth_sessions_token_hash_unique").on(table.tokenHash)],
+);
+
 export const voidRequestsTable = pgTable("void_requests", {
   id: serial("id").primaryKey(),
   orderId: integer("order_id")
@@ -115,6 +228,34 @@ export const voidRequestsTable = pgTable("void_requests", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
+});
+
+export const marketRunsTable = pgTable("market_runs", {
+  id: serial("id").primaryKey(),
+  supplier: text("supplier"),
+  totalItemsCost: numeric("total_items_cost", { precision: 10, scale: 2 }).notNull(),
+  deliveryFee: numeric("delivery_fee", { precision: 10, scale: 2 }).notNull().default("0"),
+  totalAmount: numeric("total_amount", { precision: 10, scale: 2 }).notNull(),
+  expenseLogId: integer("expense_log_id").references(() => operationLogsTable.id),
+  notes: text("notes"),
+  recordedByUserId: integer("recorded_by_user_id").references(() => usersTable.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const marketRunItemsTable = pgTable("market_run_items", {
+  id: serial("id").primaryKey(),
+  marketRunId: integer("market_run_id")
+    .notNull()
+    .references(() => marketRunsTable.id, { onDelete: "cascade" }),
+  ingredientId: integer("ingredient_id").references(() => ingredientsTable.id),
+  itemType: text("item_type").notNull(),
+  name: text("name").notNull(),
+  quantity: numeric("quantity", { precision: 10, scale: 3 }).notNull(),
+  unit: text("unit").notNull(),
+  baseCost: numeric("base_cost", { precision: 10, scale: 2 }).notNull(),
+  allocatedDeliveryCost: numeric("allocated_delivery_cost", { precision: 10, scale: 2 }).notNull().default("0"),
+  landedUnitCost: numeric("landed_unit_cost", { precision: 12, scale: 4 }).notNull(),
+  inventoryLotId: integer("inventory_lot_id").references(() => inventoryLotsTable.id),
 });
 
 export const insertProductSchema = createInsertSchema(productsTable).omit({
@@ -140,6 +281,12 @@ export const insertUserRoleSchema = createInsertSchema(userRolesTable).omit({
 export const insertVoidRequestSchema = createInsertSchema(
   voidRequestsTable,
 ).omit({ id: true, createdAt: true });
+export const insertMarketRunSchema = createInsertSchema(
+  marketRunsTable,
+).omit({ id: true, createdAt: true });
+export const insertMarketRunItemSchema = createInsertSchema(
+  marketRunItemsTable,
+).omit({ id: true });
 
 export type Product = z.infer<typeof insertProductSchema>;
 export type Order = typeof ordersTable.$inferSelect;
@@ -148,3 +295,5 @@ export type OperationLog = typeof operationLogsTable.$inferSelect;
 export type UserRole = typeof userRolesTable.$inferSelect;
 export type User = typeof usersTable.$inferSelect;
 export type VoidRequest = typeof voidRequestsTable.$inferSelect;
+export type MarketRun = typeof marketRunsTable.$inferSelect;
+export type MarketRunItem = typeof marketRunItemsTable.$inferSelect;

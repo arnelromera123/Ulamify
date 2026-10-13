@@ -5,6 +5,7 @@
  * Ulamify POS and operations API
  * OpenAPI spec version: 0.1.0
  */
+import type { OperationLogCategory } from './operationLogCategory';
 import type { OperationLogType } from './operationLogType';
 
 export interface OperationLog {
@@ -13,4 +14,10 @@ export interface OperationLog {
   details: string;
   amount: number;
   createdAt: string;
+  /** @nullable */
+  category?: OperationLogCategory;
+  /** @nullable */
+  supplier?: string | null;
+  /** @nullable */
+  notes?: string | null;
 }
