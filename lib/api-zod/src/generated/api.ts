@@ -424,10 +424,88 @@ export const GetDashboardSummaryResponse = zod.object({
   "todaySales": zod.number(),
   "orderCount": zod.number().int(),
   "averageOrder": zod.number(),
-  "pendingOrders": zod.number().int(),
   "lowStockCount": zod.number().int(),
   "expenseTotal": zod.number(),
   "topProduct": zod.string().nullish()
+})
+
+
+/**
+ * @summary Get sales totals and day-close status for a Philippine business date
+ */
+export const getDayCloseQueryBusinessDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const GetDayCloseQueryParams = zod.object({
+  "businessDate": zod.coerce.string().regex(getDayCloseQueryBusinessDateRegExp)
+})
+
+export const getDayCloseResponseBusinessDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getDayCloseResponseCloseOneBusinessDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const GetDayCloseResponse = zod.object({
+  "businessDate": zod.string().regex(getDayCloseResponseBusinessDateRegExp),
+  "orderCount": zod.number().int(),
+  "cashSales": zod.number(),
+  "gcashSales": zod.number(),
+  "mayaSales": zod.number(),
+  "expenseTotal": zod.number(),
+  "close": zod.union([zod.object({
+  "businessDate": zod.string().regex(getDayCloseResponseCloseOneBusinessDateRegExp),
+  "openingCash": zod.number(),
+  "cashPaidOut": zod.number(),
+  "cashSales": zod.number(),
+  "gcashSales": zod.number(),
+  "mayaSales": zod.number(),
+  "expectedCash": zod.number(),
+  "countedCash": zod.number(),
+  "variance": zod.number(),
+  "note": zod.string().nullable(),
+  "closedBy": zod.string().nullable(),
+  "closedAt": zod.coerce.date()
+}),zod.null()])
+})
+
+
+/**
+ * @summary Record the cash count and close a business date
+ */
+export const createDayCloseBodyBusinessDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const createDayCloseBodyOpeningCashMin = 0;
+
+export const createDayCloseBodyCashPaidOutMin = 0;
+
+export const createDayCloseBodyCountedCashMin = 0;
+
+export const createDayCloseBodyNoteMax = 500;
+
+
+
+export const CreateDayCloseBody = zod.object({
+  "businessDate": zod.string().regex(createDayCloseBodyBusinessDateRegExp),
+  "openingCash": zod.number().min(createDayCloseBodyOpeningCashMin),
+  "cashPaidOut": zod.number().min(createDayCloseBodyCashPaidOutMin),
+  "countedCash": zod.number().min(createDayCloseBodyCountedCashMin),
+  "note": zod.string().max(createDayCloseBodyNoteMax).nullish()
+})
+
+export const createDayCloseResponseBusinessDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
+
+export const CreateDayCloseResponse = zod.object({
+  "businessDate": zod.string().regex(createDayCloseResponseBusinessDateRegExp),
+  "openingCash": zod.number(),
+  "cashPaidOut": zod.number(),
+  "cashSales": zod.number(),
+  "gcashSales": zod.number(),
+  "mayaSales": zod.number(),
+  "expectedCash": zod.number(),
+  "countedCash": zod.number(),
+  "variance": zod.number(),
+  "note": zod.string().nullable(),
+  "closedBy": zod.string().nullable(),
+  "closedAt": zod.coerce.date()
 })
 
 
@@ -509,6 +587,7 @@ export const createExpenseLogBodySupplierMax = 120;
 
 export const createExpenseLogBodyNotesMax = 500;
 
+export const createExpenseLogBodyDateRegExp = new RegExp('^\\\\d{4}-\\\\d{2}-\\\\d{2}$');
 
 
 export const CreateExpenseLogBody = zod.object({
@@ -516,7 +595,8 @@ export const CreateExpenseLogBody = zod.object({
   "details": zod.string(),
   "category": zod.enum(['ingredients', 'supplies', 'delivery', 'other']).optional(),
   "supplier": zod.string().max(createExpenseLogBodySupplierMax).nullish(),
-  "notes": zod.string().max(createExpenseLogBodyNotesMax).nullish()
+  "notes": zod.string().max(createExpenseLogBodyNotesMax).nullish(),
+  "date": zod.string().regex(createExpenseLogBodyDateRegExp).optional()
 })
 
 export const CreateExpenseLogResponse = zod.object({
@@ -629,7 +709,8 @@ export const CreateInventoryAdjustmentBody = zod.object({
   "ingredientId": zod.number().int().min(1),
   "quantityDelta": zod.number(),
   "unitCost": zod.number().min(createInventoryAdjustmentBodyUnitCostMin).optional(),
-  "notes": zod.string().min(1).max(createInventoryAdjustmentBodyNotesMax)
+  "reason": zod.enum(['opening_count', 'closing_count', 'spoiled', 'staff_meal', 'correction', 'palengke_import', 'other']),
+  "notes": zod.string().max(createInventoryAdjustmentBodyNotesMax).optional()
 })
 
 export const createInventoryAdjustmentResponseQuantityAvailableMin = 0;
@@ -645,6 +726,78 @@ export const CreateInventoryAdjustmentResponse = zod.object({
   "quantityAvailable": zod.number().min(createInventoryAdjustmentResponseQuantityAvailableMin),
   "latestUnitCost": zod.number().min(createInventoryAdjustmentResponseLatestUnitCostMin)
 })
+
+
+/**
+ * @summary List an ingredient's audited stock movements
+ */
+
+
+
+export const ListInventoryMovementsParams = zod.object({
+  "ingredientId": zod.coerce.number().int().min(1)
+})
+
+export const ListInventoryMovementsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "movementType": zod.string(),
+  "quantityDelta": zod.number(),
+  "unitCost": zod.number(),
+  "notes": zod.string().nullable(),
+  "createdAt": zod.coerce.date()
+})
+export const ListInventoryMovementsResponse = zod.array(ListInventoryMovementsResponseItem)
+
+
+/**
+ * @summary Count prepared servings or record leftovers and waste
+ */
+
+export const createPreparedStockAdjustmentBodyNotesMax = 500;
+
+
+
+export const CreatePreparedStockAdjustmentBody = zod.object({
+  "productId": zod.number().int().min(1),
+  "quantityDelta": zod.number().int(),
+  "reason": zod.enum(['opening_count', 'leftovers', 'spoiled', 'staff_meal', 'correction']),
+  "notes": zod.string().max(createPreparedStockAdjustmentBodyNotesMax).nullish()
+})
+
+export const createPreparedStockAdjustmentResponseStockCountMin = 0;
+
+
+
+export const CreatePreparedStockAdjustmentResponse = zod.object({
+  "id": zod.number().int(),
+  "name": zod.string(),
+  "category": zod.enum(['Ulam', 'Rice', 'Beverage', 'Add-on']),
+  "price": zod.number(),
+  "isAvailable": zod.boolean(),
+  "stockCount": zod.number().int().min(createPreparedStockAdjustmentResponseStockCountMin),
+  "isArchived": zod.boolean(),
+  "accent": zod.string().optional()
+})
+
+
+/**
+ * @summary List prepared serving counts and waste for a menu item
+ */
+
+
+
+export const ListPreparedStockMovementsParams = zod.object({
+  "productId": zod.coerce.number().int().min(1)
+})
+
+export const ListPreparedStockMovementsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "movementType": zod.string(),
+  "details": zod.string(),
+  "servings": zod.number().int(),
+  "createdAt": zod.string()
+})
+export const ListPreparedStockMovementsResponse = zod.array(ListPreparedStockMovementsResponseItem)
 
 
 /**

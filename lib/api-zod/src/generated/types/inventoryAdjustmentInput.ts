@@ -5,6 +5,7 @@
  * Ulamify POS and operations API
  * OpenAPI spec version: 0.1.0
  */
+import type { InventoryAdjustmentInputReason } from './inventoryAdjustmentInputReason';
 
 export interface InventoryAdjustmentInput {
   /** @minimum 1 */
@@ -12,9 +13,7 @@ export interface InventoryAdjustmentInput {
   quantityDelta: number;
   /** @minimum 0 */
   unitCost?: number;
-  /**
-     * @minLength 1
-     * @maxLength 500
-     */
-  notes: string;
+  reason: InventoryAdjustmentInputReason;
+  /** @maxLength 500 */
+  notes?: string;
 }

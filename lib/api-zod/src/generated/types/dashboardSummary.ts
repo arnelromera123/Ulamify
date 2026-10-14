@@ -10,7 +10,6 @@ export interface DashboardSummary {
   todaySales: number;
   orderCount: number;
   averageOrder: number;
-  pendingOrders: number;
   lowStockCount: number;
   expenseTotal: number;
   /** @nullable */

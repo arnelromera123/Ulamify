@@ -253,11 +253,55 @@ export interface DashboardSummary {
   todaySales: number;
   orderCount: number;
   averageOrder: number;
-  pendingOrders: number;
   lowStockCount: number;
   expenseTotal: number;
   /** @nullable */
   topProduct?: string | null;
+}
+
+export interface DayCloseInput {
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  businessDate: string;
+  /** @minimum 0 */
+  openingCash: number;
+  /** @minimum 0 */
+  cashPaidOut: number;
+  /** @minimum 0 */
+  countedCash: number;
+  /**
+     * @maxLength 500
+     * @nullable
+     */
+  note?: string | null;
+}
+
+export interface DayClose {
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  businessDate: string;
+  openingCash: number;
+  cashPaidOut: number;
+  cashSales: number;
+  gcashSales: number;
+  mayaSales: number;
+  expectedCash: number;
+  countedCash: number;
+  variance: number;
+  /** @nullable */
+  note: string | null;
+  /** @nullable */
+  closedBy: string | null;
+  closedAt: string;
+}
+
+export interface DayCloseOverview {
+  /** @pattern ^\d{4}-\d{2}-\d{2}$ */
+  businessDate: string;
+  orderCount: number;
+  cashSales: number;
+  gcashSales: number;
+  mayaSales: number;
+  expenseTotal: number;
+  close: DayClose | null;
 }
 
 export interface StoreProfile {
@@ -311,6 +355,8 @@ export interface ExpenseLogInput {
      * @nullable
      */
   notes?: string | null;
+  /** @pattern ^\\d{4}-\\d{2}-\\d{2}$ */
+  date?: string;
 }
 
 export type OperationLogType = typeof OperationLogType[keyof typeof OperationLogType];
@@ -430,17 +476,69 @@ export interface InventoryReceiptInput {
   notes?: string | null;
 }
 
+export type InventoryAdjustmentInputReason = typeof InventoryAdjustmentInputReason[keyof typeof InventoryAdjustmentInputReason];
+
+
+export const InventoryAdjustmentInputReason = {
+  opening_count: 'opening_count',
+  closing_count: 'closing_count',
+  spoiled: 'spoiled',
+  staff_meal: 'staff_meal',
+  correction: 'correction',
+  palengke_import: 'palengke_import',
+  other: 'other',
+} as const;
+
 export interface InventoryAdjustmentInput {
   /** @minimum 1 */
   ingredientId: number;
   quantityDelta: number;
   /** @minimum 0 */
   unitCost?: number;
+  reason: InventoryAdjustmentInputReason;
+  /** @maxLength 500 */
+  notes?: string;
+}
+
+export interface InventoryMovement {
+  id: number;
+  movementType: string;
+  quantityDelta: number;
+  unitCost: number;
+  /** @nullable */
+  notes: string | null;
+  createdAt: string;
+}
+
+export type PreparedStockAdjustmentInputReason = typeof PreparedStockAdjustmentInputReason[keyof typeof PreparedStockAdjustmentInputReason];
+
+
+export const PreparedStockAdjustmentInputReason = {
+  opening_count: 'opening_count',
+  leftovers: 'leftovers',
+  spoiled: 'spoiled',
+  staff_meal: 'staff_meal',
+  correction: 'correction',
+} as const;
+
+export interface PreparedStockAdjustmentInput {
+  /** @minimum 1 */
+  productId: number;
+  quantityDelta: number;
+  reason: PreparedStockAdjustmentInputReason;
   /**
-     * @minLength 1
      * @maxLength 500
+     * @nullable
      */
-  notes: string;
+  notes?: string | null;
+}
+
+export interface PreparedStockMovement {
+  id: number;
+  movementType: string;
+  details: string;
+  servings: number;
+  createdAt: string;
 }
 
 export interface ProductCost {
@@ -533,5 +631,12 @@ export type ListOrdersParams = {
  * @maximum 100
  */
 limit?: number;
+};
+
+export type GetDayCloseParams = {
+/**
+ * @pattern ^\d{4}-\d{2}-\d{2}$
+ */
+businessDate: string;
 };
 

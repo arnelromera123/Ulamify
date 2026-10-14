@@ -1,0 +1,1 @@
+ALTER TABLE "day_closings" ADD COLUMN "cash_paid_out" numeric(10, 2) DEFAULT '0' NOT NULL;

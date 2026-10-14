@@ -45,6 +45,7 @@ export const ordersTable = pgTable("orders", {
   changeAmount: numeric("change_amount", { precision: 10, scale: 2 }),
   status: text("status").notNull().default("completed"),
   offlineId: text("offline_id"),
+  recordedByUserId: integer("recorded_by_user_id").references(() => usersTable.id),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -61,6 +62,21 @@ export const orderItemsTable = pgTable("order_items", {
   name: text("name").notNull(),
   quantity: integer("quantity").notNull(),
   unitPrice: numeric("unit_price", { precision: 10, scale: 2 }).notNull(),
+});
+
+export const dayClosingsTable = pgTable("day_closings", {
+  businessDate: text("business_date").primaryKey(),
+  openingCash: numeric("opening_cash", { precision: 10, scale: 2 }).notNull(),
+  cashPaidOut: numeric("cash_paid_out", { precision: 10, scale: 2 }).notNull().default("0"),
+  cashSales: numeric("cash_sales", { precision: 10, scale: 2 }).notNull(),
+  gcashSales: numeric("gcash_sales", { precision: 10, scale: 2 }).notNull(),
+  mayaSales: numeric("maya_sales", { precision: 10, scale: 2 }).notNull(),
+  expectedCash: numeric("expected_cash", { precision: 10, scale: 2 }).notNull(),
+  countedCash: numeric("counted_cash", { precision: 10, scale: 2 }).notNull(),
+  variance: numeric("variance", { precision: 10, scale: 2 }).notNull(),
+  note: text("note"),
+  closedByUserId: integer("closed_by_user_id").references(() => usersTable.id),
+  closedAt: timestamp("closed_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const operationLogsTable = pgTable("operation_logs", {

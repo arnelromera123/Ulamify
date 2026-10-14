@@ -22,4 +22,6 @@ export interface ExpenseLogInput {
      * @nullable
      */
   notes?: string | null;
+  /** @pattern ^\\d{4}-\\d{2}-\\d{2}$ */
+  date?: string;
 }

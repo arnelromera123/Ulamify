@@ -22,11 +22,16 @@ import type {
 import type {
   ApproveVoidInput,
   DashboardSummary,
+  DayClose,
+  DayCloseInput,
+  DayCloseOverview,
   ExpenseLogInput,
+  GetDayCloseParams,
   HealthStatus,
   InventoryAdjustmentInput,
   InventoryIngredient,
   InventoryIngredientInput,
+  InventoryMovement,
   InventoryReceiptInput,
   ListOrdersParams,
   LoginInput,
@@ -34,6 +39,8 @@ import type {
   OperationLog,
   Order,
   OrderInput,
+  PreparedStockAdjustmentInput,
+  PreparedStockMovement,
   PriceProposal,
   PriceProposalDecision,
   PriceProposalInput,
@@ -1649,6 +1656,178 @@ export function useGetDashboardSummary<TData = Awaited<ReturnType<typeof getDash
 
 
 
+export const getGetDayCloseUrl = (params: GetDayCloseParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/operations/day-close?${stringifiedParams}` : `/api/operations/day-close`
+}
+
+/**
+ * @summary Get sales totals and day-close status for a Philippine business date
+ */
+export const getDayClose = async (params: GetDayCloseParams, options?: Parameters<typeof customFetch>[1]): Promise<DayCloseOverview> => {
+
+  return customFetch<DayCloseOverview>(getGetDayCloseUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetDayCloseQueryKey = (params?: GetDayCloseParams,) => {
+    return [
+    `/api/operations/day-close`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetDayCloseQueryOptions = <TData = Awaited<ReturnType<typeof getDayClose>>, TError = ErrorType<unknown>>(params: GetDayCloseParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDayClose>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetDayCloseQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getDayClose>>> = ({ signal }) => getDayClose(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getDayClose>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetDayCloseQueryResult = NonNullable<Awaited<ReturnType<typeof getDayClose>>>
+export type GetDayCloseQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get sales totals and day-close status for a Philippine business date
+ */
+
+export function useGetDayClose<TData = Awaited<ReturnType<typeof getDayClose>>, TError = ErrorType<unknown>>(
+ params: GetDayCloseParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getDayClose>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetDayCloseQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateDayCloseUrl = () => {
+
+
+
+
+  return `/api/operations/day-close`
+}
+
+/**
+ * @summary Record the cash count and close a business date
+ */
+export const createDayClose = async (dayCloseInput: DayCloseInput, options?: Parameters<typeof customFetch>[1]): Promise<DayClose> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<DayClose>(getCreateDayCloseUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(dayCloseInput)
+  }
+);}
+
+
+
+
+
+export const getCreateDayCloseMutationKey = () => ['createDayClose'] as const;
+
+export const getCreateDayCloseMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createDayClose>>, TError,CreateDayCloseMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createDayClose>>, TError,CreateDayCloseMutationVariables, TContext> => {
+
+const mutationKey = getCreateDayCloseMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createDayClose>>, CreateDayCloseMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createDayClose(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateDayCloseMutationResult = NonNullable<Awaited<ReturnType<typeof createDayClose>>>
+    export type CreateDayCloseMutationBody = BodyType<DayCloseInput>
+    export type CreateDayCloseMutationError = ErrorType<void>
+    export type CreateDayCloseMutationVariables = {data: BodyType<DayCloseInput>}
+
+    /**
+ * @summary Record the cash count and close a business date
+ */
+export const useCreateDayClose = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createDayClose>>, TError,CreateDayCloseMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createDayClose>>,
+        TError,
+        CreateDayCloseMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreateDayCloseMutationOptions(options));
+    }
+
 export const getGetStoreProfileUrl = () => {
 
 
@@ -2407,6 +2586,248 @@ export const useCreateInventoryAdjustment = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getCreateInventoryAdjustmentMutationOptions(options));
     }
+
+export const getListInventoryMovementsUrl = (ingredientId: number,) => {
+
+
+
+
+  return `/api/inventory/ingredients/${ingredientId}/movements`
+}
+
+/**
+ * @summary List an ingredient's audited stock movements
+ */
+export const listInventoryMovements = async (ingredientId: number, options?: Parameters<typeof customFetch>[1]): Promise<InventoryMovement[]> => {
+
+  return customFetch<InventoryMovement[]>(getListInventoryMovementsUrl(ingredientId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListInventoryMovementsQueryKey = (ingredientId: number,) => {
+    return [
+    `/api/inventory/ingredients/${ingredientId}/movements`
+    ] as const;
+    }
+
+
+export const getListInventoryMovementsQueryOptions = <TData = Awaited<ReturnType<typeof listInventoryMovements>>, TError = ErrorType<unknown>>(ingredientId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listInventoryMovements>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListInventoryMovementsQueryKey(ingredientId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listInventoryMovements>>> = ({ signal }) => listInventoryMovements(ingredientId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: ingredientId !== null && ingredientId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listInventoryMovements>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListInventoryMovementsQueryResult = NonNullable<Awaited<ReturnType<typeof listInventoryMovements>>>
+export type ListInventoryMovementsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List an ingredient's audited stock movements
+ */
+
+export function useListInventoryMovements<TData = Awaited<ReturnType<typeof listInventoryMovements>>, TError = ErrorType<unknown>>(
+ ingredientId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listInventoryMovements>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListInventoryMovementsQueryOptions(ingredientId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreatePreparedStockAdjustmentUrl = () => {
+
+
+
+
+  return `/api/inventory/prepared-adjustments`
+}
+
+/**
+ * @summary Count prepared servings or record leftovers and waste
+ */
+export const createPreparedStockAdjustment = async (preparedStockAdjustmentInput: PreparedStockAdjustmentInput, options?: Parameters<typeof customFetch>[1]): Promise<Product> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<Product>(getCreatePreparedStockAdjustmentUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(preparedStockAdjustmentInput)
+  }
+);}
+
+
+
+
+
+export const getCreatePreparedStockAdjustmentMutationKey = () => ['createPreparedStockAdjustment'] as const;
+
+export const getCreatePreparedStockAdjustmentMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPreparedStockAdjustment>>, TError,CreatePreparedStockAdjustmentMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createPreparedStockAdjustment>>, TError,CreatePreparedStockAdjustmentMutationVariables, TContext> => {
+
+const mutationKey = getCreatePreparedStockAdjustmentMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createPreparedStockAdjustment>>, CreatePreparedStockAdjustmentMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createPreparedStockAdjustment(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreatePreparedStockAdjustmentMutationResult = NonNullable<Awaited<ReturnType<typeof createPreparedStockAdjustment>>>
+    export type CreatePreparedStockAdjustmentMutationBody = BodyType<PreparedStockAdjustmentInput>
+    export type CreatePreparedStockAdjustmentMutationError = ErrorType<unknown>
+    export type CreatePreparedStockAdjustmentMutationVariables = {data: BodyType<PreparedStockAdjustmentInput>}
+
+    /**
+ * @summary Count prepared servings or record leftovers and waste
+ */
+export const useCreatePreparedStockAdjustment = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPreparedStockAdjustment>>, TError,CreatePreparedStockAdjustmentMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createPreparedStockAdjustment>>,
+        TError,
+        CreatePreparedStockAdjustmentMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreatePreparedStockAdjustmentMutationOptions(options));
+    }
+
+export const getListPreparedStockMovementsUrl = (productId: number,) => {
+
+
+
+
+  return `/api/inventory/products/${productId}/movements`
+}
+
+/**
+ * @summary List prepared serving counts and waste for a menu item
+ */
+export const listPreparedStockMovements = async (productId: number, options?: Parameters<typeof customFetch>[1]): Promise<PreparedStockMovement[]> => {
+
+  return customFetch<PreparedStockMovement[]>(getListPreparedStockMovementsUrl(productId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListPreparedStockMovementsQueryKey = (productId: number,) => {
+    return [
+    `/api/inventory/products/${productId}/movements`
+    ] as const;
+    }
+
+
+export const getListPreparedStockMovementsQueryOptions = <TData = Awaited<ReturnType<typeof listPreparedStockMovements>>, TError = ErrorType<unknown>>(productId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listPreparedStockMovements>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPreparedStockMovementsQueryKey(productId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPreparedStockMovements>>> = ({ signal }) => listPreparedStockMovements(productId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: productId !== null && productId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPreparedStockMovements>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListPreparedStockMovementsQueryResult = NonNullable<Awaited<ReturnType<typeof listPreparedStockMovements>>>
+export type ListPreparedStockMovementsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List prepared serving counts and waste for a menu item
+ */
+
+export function useListPreparedStockMovements<TData = Awaited<ReturnType<typeof listPreparedStockMovements>>, TError = ErrorType<unknown>>(
+ productId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listPreparedStockMovements>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListPreparedStockMovementsQueryOptions(productId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getGetProductCostUrl = (productId: number,) => {
 

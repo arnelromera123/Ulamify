@@ -377,6 +377,44 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DashboardSummary"
+  /operations/day-close:
+    get:
+      operationId: getDayClose
+      tags: [operations]
+      summary: Get sales totals and day-close status for a Philippine business date
+      parameters:
+        - name: businessDate
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^\d{4}-\d{2}-\d{2}$'
+      responses:
+        "200":
+          description: Daily sales breakdown and optional close record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DayCloseOverview"
+    post:
+      operationId: createDayClose
+      tags: [operations]
+      summary: Record the cash count and close a business date
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DayCloseInput"
+      responses:
+        "201":
+          description: Day close recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DayClose"
+        "409":
+          description: This business date has already been closed
   /store-profile:
     get:
       operationId: getStoreProfile
@@ -522,6 +560,66 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/InventoryIngredient"
+  /inventory/ingredients/{ingredientId}/movements:
+    get:
+      operationId: listInventoryMovements
+      tags: [inventory]
+      summary: List an ingredient's audited stock movements
+      parameters:
+        - name: ingredientId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Recent ingredient stock movements
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InventoryMovement"
+  /inventory/prepared-adjustments:
+    post:
+      operationId: createPreparedStockAdjustment
+      tags: [inventory]
+      summary: Count prepared servings or record leftovers and waste
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreparedStockAdjustmentInput"
+      responses:
+        "200":
+          description: Updated prepared serving stock
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+  /inventory/products/{productId}/movements:
+    get:
+      operationId: listPreparedStockMovements
+      tags: [inventory]
+      summary: List prepared serving counts and waste for a menu item
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Recent prepared serving movements
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PreparedStockMovement"
   /costing/products/{productId}:
     get:
       operationId: getProductCost
@@ -888,7 +986,7 @@ components:
           type: boolean
     DashboardSummary:
       type: object
-      required: [todaySales, orderCount, averageOrder, pendingOrders, lowStockCount, expenseTotal]
+      required: [todaySales, orderCount, averageOrder, lowStockCount, expenseTotal]
       properties:
         todaySales:
           type: number
@@ -896,14 +994,82 @@ components:
           type: integer
         averageOrder:
           type: number
-        pendingOrders:
-          type: integer
         lowStockCount:
           type: integer
         expenseTotal:
           type: number
         topProduct:
           type: ["string", "null"]
+    DayCloseInput:
+      type: object
+      required: [businessDate, openingCash, cashPaidOut, countedCash]
+      properties:
+        businessDate:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        openingCash:
+          type: number
+          minimum: 0
+        cashPaidOut:
+          type: number
+          minimum: 0
+        countedCash:
+          type: number
+          minimum: 0
+        note:
+          type: ["string", "null"]
+          maxLength: 500
+    DayClose:
+      type: object
+      required: [businessDate, openingCash, cashPaidOut, cashSales, gcashSales, mayaSales, expectedCash, countedCash, variance, note, closedBy, closedAt]
+      properties:
+        businessDate:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        openingCash:
+          type: number
+        cashPaidOut:
+          type: number
+        cashSales:
+          type: number
+        gcashSales:
+          type: number
+        mayaSales:
+          type: number
+        expectedCash:
+          type: number
+        countedCash:
+          type: number
+        variance:
+          type: number
+        note:
+          type: ["string", "null"]
+        closedBy:
+          type: ["string", "null"]
+        closedAt:
+          type: string
+          format: date-time
+    DayCloseOverview:
+      type: object
+      required: [businessDate, orderCount, cashSales, gcashSales, mayaSales, expenseTotal, close]
+      properties:
+        businessDate:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+        orderCount:
+          type: integer
+        cashSales:
+          type: number
+        gcashSales:
+          type: number
+        mayaSales:
+          type: number
+        expenseTotal:
+          type: number
+        close:
+          oneOf:
+            - $ref: "#/components/schemas/DayClose"
+            - type: "null"
     StoreProfile:
       type: object
       required: [name, location]
@@ -953,6 +1119,9 @@ components:
         notes:
           type: ["string", "null"]
           maxLength: 500
+        date:
+          type: string
+          pattern: '^\\d{4}-\\d{2}-\\d{2}$'
     OperationLog:
       type: object
       required: [id, type, details, amount, createdAt]
@@ -1055,7 +1224,7 @@ components:
           maxLength: 500
     InventoryAdjustmentInput:
       type: object
-      required: [ingredientId, quantityDelta, notes]
+      required: [ingredientId, quantityDelta, reason]
       properties:
         ingredientId:
           type: integer
@@ -1067,10 +1236,60 @@ components:
         unitCost:
           type: number
           minimum: 0
+        reason:
+          type: string
+          enum: [opening_count, closing_count, spoiled, staff_meal, correction, palengke_import, other]
         notes:
           type: string
-          minLength: 1
           maxLength: 500
+    InventoryMovement:
+      type: object
+      required: [id, movementType, quantityDelta, unitCost, notes, createdAt]
+      properties:
+        id:
+          type: integer
+        movementType:
+          type: string
+        quantityDelta:
+          type: number
+        unitCost:
+          type: number
+        notes:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+    PreparedStockAdjustmentInput:
+      type: object
+      required: [productId, quantityDelta, reason]
+      properties:
+        productId:
+          type: integer
+          minimum: 1
+        quantityDelta:
+          type: integer
+          not:
+            const: 0
+        reason:
+          type: string
+          enum: [opening_count, leftovers, spoiled, staff_meal, correction]
+        notes:
+          type: [string, "null"]
+          maxLength: 500
+    PreparedStockMovement:
+      type: object
+      required: [id, movementType, details, servings, createdAt]
+      properties:
+        id:
+          type: integer
+        movementType:
+          type: string
+        details:
+          type: string
+        servings:
+          type: integer
+        createdAt:
+          type: string
     ProductCost:
       type: object
       required: [productId, ingredients, packagingCost, laborCost, overheadCost]

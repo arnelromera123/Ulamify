@@ -8,11 +8,17 @@ import {
   CreateExpenseLogResponse,
   CreateInventoryAdjustmentBody,
   CreateInventoryAdjustmentResponse,
+  CreatePreparedStockAdjustmentBody,
+  CreatePreparedStockAdjustmentResponse,
   CreateInventoryIngredientBody,
   CreateInventoryIngredientResponse,
   CreateInventoryReceiptBody,
   CreateInventoryReceiptResponse,
   ListInventoryIngredientsResponse,
+  ListInventoryMovementsParams,
+  ListInventoryMovementsResponse,
+  ListPreparedStockMovementsParams,
+  ListPreparedStockMovementsResponse,
   CreatePriceProposalBody,
   CreatePriceProposalResponse,
   CreateOrderBody,
@@ -31,6 +37,10 @@ import {
   CreateVoidRequestParams,
   CreateVoidRequestResponse,
   GetDashboardSummaryResponse,
+  GetDayCloseQueryParams,
+  GetDayCloseResponse,
+  CreateDayCloseBody,
+  CreateDayCloseResponse,
   ListOrdersQueryParams,
   ListOrdersResponse,
   ListProductsResponse,
@@ -79,6 +89,7 @@ import {
 } from "../lib/auth";
 import {
   authSessionsTable,
+  dayClosingsTable,
   db,
   operationLogsTable,
   orderItemsTable,
@@ -100,6 +111,68 @@ import {
 
 const router: IRouter = Router();
 const defaultStoreProfile = { id: 1, name: "Bayanihan Kitchen", location: "Makati" };
+
+function manilaBusinessDayRange(date: string): { start: Date; end: Date } | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const [year, month, day] = date.split("-").map(Number);
+  const normalized = new Date(Date.UTC(year, month - 1, day)).toISOString().slice(0, 10);
+  if (normalized !== date) return null;
+  const start = new Date(Date.UTC(year, month - 1, day) - 8 * 60 * 60 * 1000);
+  return { start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
+}
+
+function currentManilaBusinessDate(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const value = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${value("year")}-${value("month")}-${value("day")}`;
+}
+
+function dayCloseResponse(
+  close: typeof dayClosingsTable.$inferSelect,
+  closedBy: string | null,
+) {
+  return {
+    businessDate: close.businessDate,
+    openingCash: money(close.openingCash),
+    cashPaidOut: money(close.cashPaidOut),
+    cashSales: money(close.cashSales),
+    gcashSales: money(close.gcashSales),
+    mayaSales: money(close.mayaSales),
+    expectedCash: money(close.expectedCash),
+    countedCash: money(close.countedCash),
+    variance: money(close.variance),
+    note: close.note,
+    closedBy,
+    closedAt: close.closedAt.toISOString(),
+  };
+}
+
+async function daySalesTotals(businessDate: string) {
+  const range = manilaBusinessDayRange(businessDate);
+  if (!range) return null;
+  const orders = await db.select().from(ordersTable).where(and(
+    gte(ordersTable.createdAt, range.start),
+    sql`${ordersTable.createdAt} < ${range.end}`,
+    eq(ordersTable.status, "completed"),
+  ));
+  const totals = { orderCount: orders.length, cashSales: 0, gcashSales: 0, mayaSales: 0 };
+  for (const order of orders) {
+    if (order.paymentMethod === "Cash") totals.cashSales += money(order.totalAmount);
+    if (order.paymentMethod === "GCash") totals.gcashSales += money(order.totalAmount);
+    if (order.paymentMethod === "Maya") totals.mayaSales += money(order.totalAmount);
+  }
+  const logs = await db.select({ amount: operationLogsTable.amount }).from(operationLogsTable).where(and(
+    gte(operationLogsTable.createdAt, range.start),
+    sql`${operationLogsTable.createdAt} < ${range.end}`,
+    eq(operationLogsTable.type, "palengke_expense"),
+  ));
+  return {
+    ...totals,
+    expenseTotal: logs.reduce((sum, log) => sum + money(log.amount), 0),
+  };
+}
 
 const seedProducts = [
   { name: "Adobo sa Gata", category: "Ulam", price: "85", accent: "terracotta" },
@@ -179,6 +252,14 @@ class IngredientShortageError extends Error {
 }
 
 class InvalidInventoryAdjustmentError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+class MissingPreparedProductError extends Error {}
+
+class PreparedStockShortageError extends Error {
   constructor(message: string) {
     super(message);
   }
@@ -763,6 +844,7 @@ router.post("/orders", requirePermission("counter"), async (req, res): Promise<v
     parsed.data.paymentMethod === "Cash" && cashTendered !== null
       ? Math.max(0, cashTendered - totalAmount)
       : null;
+  const recordedByUserId = getAuthenticatedUser(res)?.id ?? null;
   let result: { order: typeof ordersTable.$inferSelect; duplicate: boolean };
   try {
     result = await db.transaction(async (tx) => {
@@ -774,6 +856,7 @@ router.post("/orders", requirePermission("counter"), async (req, res): Promise<v
         cashTendered: cashTendered === null ? null : cashTendered.toFixed(2),
         changeAmount: change === null ? null : change.toFixed(2),
         offlineId: parsed.data.offlineId ?? null,
+        recordedByUserId,
       })
       .onConflictDoNothing({ target: ordersTable.offlineId })
       .returning();
@@ -1044,20 +1127,31 @@ router.put("/store-profile", requirePermission("settings"), async (req, res): Pr
 // ---------------------------------------------------------------------------
 
 router.get("/dashboard/summary", requirePermission("dashboard"), async (_req, res): Promise<void> => {
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
+  const manilaDateParts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const datePart = (type: string) => manilaDateParts.find((part) => part.type === type)?.value ?? "0";
+  const startOfDay = new Date(
+    Date.UTC(Number(datePart("year")), Number(datePart("month")) - 1, Number(datePart("day"))) - 8 * 60 * 60 * 1000,
+  );
+  const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
   const orders = await db
     .select()
     .from(ordersTable)
     .where(
       and(
         gte(ordersTable.createdAt, startOfDay),
+        sql`${ordersTable.createdAt} < ${endOfDay}`,
         eq(ordersTable.status, "completed"),
       ),
     );
-  const logs = await db.select().from(operationLogsTable).where(
+  const logs = await db.select().from(operationLogsTable).where(and(
     gte(operationLogsTable.createdAt, startOfDay),
-  );
+    sql`${operationLogsTable.createdAt} < ${endOfDay}`,
+  ));
   const todaySales = orders.reduce((sum, order) => sum + money(order.totalAmount), 0);
   const expenseTotal = logs
     .filter((log) => log.type === "palengke_expense")
@@ -1066,16 +1160,102 @@ router.get("/dashboard/summary", requirePermission("dashboard"), async (_req, re
     .select({ stockCount: productsTable.stockCount })
     .from(productsTable)
     .where(eq(productsTable.isArchived, false));
+  const orderIds = orders.map((order) => order.id);
+  const soldItems = orderIds.length
+    ? await db.select({ name: orderItemsTable.name, quantity: orderItemsTable.quantity })
+        .from(orderItemsTable)
+        .where(inArray(orderItemsTable.orderId, orderIds))
+    : [];
+  const quantitiesByProduct = new Map<string, number>();
+  for (const item of soldItems) {
+    quantitiesByProduct.set(item.name, (quantitiesByProduct.get(item.name) ?? 0) + item.quantity);
+  }
+  const topProduct = [...quantitiesByProduct.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0] ?? null;
   const response = {
     todaySales,
     orderCount: orders.length,
     averageOrder: orders.length === 0 ? 0 : todaySales / orders.length,
-    pendingOrders: 0,
     lowStockCount: products.filter((product) => product.stockCount <= 5).length,
     expenseTotal,
-    topProduct: "Adobo sa Gata",
+    topProduct,
   };
   res.json(GetDashboardSummaryResponse.parse(response));
+});
+
+router.get("/operations/day-close", requirePermission("orders"), async (req, res): Promise<void> => {
+  const parsed = GetDayCloseQueryParams.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Provide a businessDate in YYYY-MM-DD format." });
+    return;
+  }
+  const businessDate = String(parsed.data.businessDate);
+  const totals = await daySalesTotals(businessDate);
+  if (!totals) {
+    res.status(400).json({ error: "Provide a valid businessDate in YYYY-MM-DD format." });
+    return;
+  }
+  const [close] = await db.select().from(dayClosingsTable).where(eq(dayClosingsTable.businessDate, businessDate)).limit(1);
+  let closeResponse = null;
+  if (close) {
+    const [user] = close.closedByUserId
+      ? await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, close.closedByUserId)).limit(1)
+      : [];
+    closeResponse = dayCloseResponse(close, user?.name ?? null);
+  }
+  res.json(GetDayCloseResponse.parse({ businessDate, ...totals, close: closeResponse }));
+});
+
+router.post("/operations/day-close", requirePermission("orders"), async (req, res): Promise<void> => {
+  const parsed = CreateDayCloseBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const businessDate = parsed.data.businessDate;
+  if (businessDate > currentManilaBusinessDate()) {
+    res.status(400).json({ error: "A future business date cannot be closed." });
+    return;
+  }
+  const totals = await daySalesTotals(businessDate);
+  if (!totals) {
+    res.status(400).json({ error: "Provide a valid businessDate in YYYY-MM-DD format." });
+    return;
+  }
+  const openingCash = parsed.data.openingCash;
+  const cashPaidOut = parsed.data.cashPaidOut;
+  const countedCash = parsed.data.countedCash;
+  if (!Number.isFinite(openingCash) || !Number.isFinite(cashPaidOut) || !Number.isFinite(countedCash)) {
+    res.status(400).json({ error: "Cash amounts must be valid numbers." });
+    return;
+  }
+  if (Math.abs(countedCash - (openingCash + totals.cashSales - cashPaidOut)) > 0.01 && !parsed.data.note?.trim()) {
+    res.status(400).json({ error: "Add a short note when counted cash does not match the expected amount." });
+    return;
+  }
+  const expectedCash = openingCash + totals.cashSales - cashPaidOut;
+  const userId = getAuthenticatedUser(res)?.id ?? null;
+  const [created] = await db.insert(dayClosingsTable).values({
+    businessDate,
+    openingCash: openingCash.toFixed(2),
+    cashPaidOut: cashPaidOut.toFixed(2),
+    cashSales: totals.cashSales.toFixed(2),
+    gcashSales: totals.gcashSales.toFixed(2),
+    mayaSales: totals.mayaSales.toFixed(2),
+    expectedCash: expectedCash.toFixed(2),
+    countedCash: countedCash.toFixed(2),
+    variance: (countedCash - expectedCash).toFixed(2),
+    note: parsed.data.note?.trim() || null,
+    closedByUserId: userId,
+  }).onConflictDoNothing({ target: dayClosingsTable.businessDate }).returning();
+  if (!created) {
+    res.status(409).json({ error: "This business date has already been closed." });
+    return;
+  }
+  const [user] = userId
+    ? await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)).limit(1)
+    : [];
+  res.status(201).json(CreateDayCloseResponse.parse(dayCloseResponse(created, user?.name ?? null)));
 });
 
 router.post("/operations/production", requirePermission("kitchen"), async (req, res): Promise<void> => {
@@ -1306,6 +1486,14 @@ router.post("/inventory/adjustments", requirePermission("purchasing", "costing")
     res.status(400).json({ error: "Adjustment quantity must be non-zero and at least 0.001." });
     return;
   }
+  if (["spoiled", "staff_meal"].includes(parsed.data.reason) && delta > 0) {
+    res.status(400).json({ error: "Waste and staff-meal adjustments must reduce ingredient stock." });
+    return;
+  }
+  if (parsed.data.reason === "palengke_import" && delta < 0) {
+    res.status(400).json({ error: "A Palengke import must add ingredient stock." });
+    return;
+  }
   const authenticatedUser = getAuthenticatedUser(res);
   try {
     await db.transaction(async (tx) => {
@@ -1350,7 +1538,7 @@ router.post("/inventory/adjustments", requirePermission("purchasing", "costing")
           movementType: "adjustment",
           quantityDelta: delta.toFixed(3),
           unitCost: latestUnitCost.toFixed(4),
-          notes: parsed.data.notes.trim(),
+          notes: parsed.data.notes?.trim() || parsed.data.reason.replaceAll("_", " "),
           recordedByUserId: authenticatedUser?.id ?? null,
         });
         return;
@@ -1374,10 +1562,10 @@ router.post("/inventory/adjustments", requirePermission("purchasing", "costing")
         await tx.insert(inventoryMovementsTable).values({
           ingredientId: ingredient.id,
           lotId: lot.id,
-          movementType: "adjustment",
+          movementType: parsed.data.reason === "spoiled" ? "waste" : "adjustment",
           quantityDelta: (-removed).toFixed(3),
           unitCost: lot.unitCost,
-          notes: parsed.data.notes.trim(),
+          notes: [parsed.data.reason.replaceAll("_", " "), parsed.data.notes?.trim()].filter(Boolean).join(": "),
           recordedByUserId: authenticatedUser?.id ?? null,
         });
         remaining -= removed;
@@ -1397,6 +1585,103 @@ router.post("/inventory/adjustments", requirePermission("purchasing", "costing")
   const response = await inventoryIngredientResponse(ingredient.id);
   if (!response) throw new Error("Adjusted ingredient could not be reloaded.");
   res.json(CreateInventoryAdjustmentResponse.parse(response));
+});
+
+router.get("/inventory/ingredients/:ingredientId/movements", requirePermission("purchasing", "costing"), async (req, res): Promise<void> => {
+  const params = ListInventoryMovementsParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid ingredient ID" });
+    return;
+  }
+  const [ingredient] = await db.select({ id: ingredientsTable.id }).from(ingredientsTable)
+    .where(eq(ingredientsTable.id, params.data.ingredientId));
+  if (!ingredient) {
+    res.status(404).json({ error: "Ingredient not found." });
+    return;
+  }
+  const movements = await db.select().from(inventoryMovementsTable)
+    .where(eq(inventoryMovementsTable.ingredientId, ingredient.id))
+    .orderBy(desc(inventoryMovementsTable.createdAt), desc(inventoryMovementsTable.id))
+    .limit(50);
+  res.json(ListInventoryMovementsResponse.parse(movements.map((movement) => ({
+    id: movement.id,
+    movementType: movement.movementType,
+    quantityDelta: money(movement.quantityDelta),
+    unitCost: money(movement.unitCost),
+    notes: movement.notes,
+    createdAt: movement.createdAt.toISOString(),
+  }))));
+});
+
+router.post("/inventory/prepared-adjustments", requirePermission("purchasing", "costing", "kitchen"), async (req, res): Promise<void> => {
+  const parsed = CreatePreparedStockAdjustmentBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  if (["leftovers", "spoiled", "staff_meal"].includes(parsed.data.reason) && parsed.data.quantityDelta > 0) {
+    res.status(400).json({ error: "Leftovers, waste, and staff meals must reduce prepared stock." });
+    return;
+  }
+  let updatedProduct: typeof productsTable.$inferSelect | undefined;
+  try {
+    updatedProduct = await db.transaction(async (tx) => {
+      const [product] = await tx.select().from(productsTable)
+        .where(eq(productsTable.id, parsed.data.productId)).for("update");
+      if (!product) throw new MissingPreparedProductError();
+      const nextCount = product.stockCount + parsed.data.quantityDelta;
+      if (nextCount < 0) {
+        throw new PreparedStockShortageError(`Cannot remove ${Math.abs(parsed.data.quantityDelta)} servings; only ${product.stockCount} are available.`);
+      }
+      const [updated] = await tx.update(productsTable).set({ stockCount: nextCount })
+        .where(eq(productsTable.id, product.id)).returning();
+      await tx.insert(operationLogsTable).values({
+        type: parsed.data.reason === "spoiled" || parsed.data.reason === "staff_meal" ? "prepared_waste" : "prepared_count",
+        details: `${product.name}: ${parsed.data.quantityDelta > 0 ? "+" : ""}${parsed.data.quantityDelta} servings (${parsed.data.reason.replaceAll("_", " ")})`,
+        servings: parsed.data.quantityDelta,
+        productId: product.id,
+        notes: parsed.data.notes?.trim() || null,
+        recordedByUserId: getAuthenticatedUser(res)?.id ?? null,
+      });
+      return updated;
+    });
+  } catch (error) {
+    if (error instanceof MissingPreparedProductError) {
+      res.status(404).json({ error: "Menu item not found." });
+      return;
+    }
+    if (error instanceof PreparedStockShortageError) {
+      res.status(409).json({ error: error.message });
+      return;
+    }
+    throw error;
+  }
+  res.json(CreatePreparedStockAdjustmentResponse.parse(updatedProduct));
+});
+
+router.get("/inventory/products/:productId/movements", requirePermission("purchasing", "costing", "kitchen"), async (req, res): Promise<void> => {
+  const params = ListPreparedStockMovementsParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid menu item ID" });
+    return;
+  }
+  const [product] = await db.select({ id: productsTable.id }).from(productsTable)
+    .where(eq(productsTable.id, params.data.productId));
+  if (!product) {
+    res.status(404).json({ error: "Menu item not found." });
+    return;
+  }
+  const movements = await db.select().from(operationLogsTable)
+    .where(and(eq(operationLogsTable.productId, product.id), inArray(operationLogsTable.type, ["batch_production", "prepared_count", "prepared_waste"])))
+    .orderBy(desc(operationLogsTable.createdAt), desc(operationLogsTable.id))
+    .limit(50);
+  res.json(ListPreparedStockMovementsResponse.parse(movements.map((movement) => ({
+    id: movement.id,
+    movementType: movement.type,
+    details: movement.details,
+    servings: movement.servings ?? 0,
+    createdAt: movement.createdAt.toISOString(),
+  }))));
 });
 
 router.get("/costing/products/:productId", requireOwnerOrManager, async (req, res): Promise<void> => {
@@ -1655,6 +1940,11 @@ router.post("/operations/expenses", requirePermission("purchasing", "costing"), 
     res.status(400).json({ error: "Expense amount must be greater than zero." });
     return;
   }
+  const expenseDate = parsed.data.date ? manilaBusinessDayRange(parsed.data.date) : null;
+  if (parsed.data.date && !expenseDate) {
+    res.status(400).json({ error: "Expense date must be a valid Philippine business date (YYYY-MM-DD)." });
+    return;
+  }
   const authenticatedUser = getAuthenticatedUser(res);
   const [created] = await db
     .insert(operationLogsTable)
@@ -1665,6 +1955,7 @@ router.post("/operations/expenses", requirePermission("purchasing", "costing"), 
       expenseCategory: parsed.data.category ?? "other",
       supplier: parsed.data.supplier?.trim() || null,
       notes: parsed.data.notes?.trim() || null,
+      ...(expenseDate ? { createdAt: expenseDate.start } : {}),
       recordedByUserId: authenticatedUser?.id ?? null,
     })
     .returning();
@@ -1748,6 +2039,25 @@ router.post("/operations/market-runs", requirePermission("purchasing", "costing"
 
   const majorItems = items.filter((item) => item.itemType === "major_ingredient");
   const totalMajorItemsCost = majorItems.reduce((sum, item) => sum + item.totalCost, 0);
+
+  for (const item of items) {
+    if (!item.ingredientId) continue;
+    if (item.itemType !== "major_ingredient" && item.itemType !== "pantry_item") {
+      res.status(400).json({ error: "Only major ingredients and pantry items can be linked to ingredient inventory." });
+      return;
+    }
+    const [ingredient] = await db.select().from(ingredientsTable)
+      .where(eq(ingredientsTable.id, item.ingredientId));
+    if (!ingredient) {
+      res.status(400).json({ error: `Inventory ingredient ${item.ingredientId} was not found.` });
+      return;
+    }
+    const conversion = purchaseUnitConversions[item.unit as keyof typeof purchaseUnitConversions];
+    if (!conversion || conversion.baseUnit !== ingredient.baseUnit) {
+      res.status(400).json({ error: `Unit ${item.unit} is incompatible with ${ingredient.name} (${ingredient.baseUnit}).` });
+      return;
+    }
+  }
 
   const totalItemsCost = items.reduce((sum, item) => sum + item.totalCost, 0);
   const grandTotal = totalItemsCost + deliveryFee;

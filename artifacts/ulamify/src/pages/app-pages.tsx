@@ -59,7 +59,10 @@ import {
   useCreateInventoryIngredient,
   useCreateInventoryReceipt,
   useCreateInventoryAdjustment,
+  useCreatePreparedStockAdjustment,
   useListInventoryIngredients,
+  useListInventoryMovements,
+  useListPreparedStockMovements,
   useGetProductCost,
   useUpdateProductCost,
   useCreatePriceProposal,
@@ -80,11 +83,18 @@ import {
   useUpdateUser,
   useCreateMarketRun,
   useListMarketRuns,
+  useCreateExpenseLog,
+  useListExpenseLogs,
+  useGetDayClose,
+  useCreateDayClose,
+  getGetDayCloseQueryKey,
   getListMarketRunsQueryKey,
   getGetDashboardSummaryQueryKey,
   getListOrdersQueryKey,
   getListExpenseLogsQueryKey,
   getListInventoryIngredientsQueryKey,
+  getListInventoryMovementsQueryKey,
+  getListPreparedStockMovementsQueryKey,
   getListProductsQueryKey,
   getListRolesQueryKey,
   getListUsersQueryKey,
@@ -204,6 +214,31 @@ const dateLabel = (value: string) =>
     month: 'short',
     day: 'numeric',
   });
+
+const businessDateToday = () => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const value = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+  return `${value('year')}-${value('month')}-${value('day')}`;
+};
+
+function printOrderReceipt(order: Order, storeName: string, location: string) {
+  const popup = window.open('', '_blank', 'width=420,height=640');
+  if (!popup) return false;
+  const escape = (value: string) => value.replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[char] ?? char);
+  const rows = order.items.map((item) => `<tr><td>${item.quantity} × ${escape(item.name)}</td><td>${money(item.unitPrice * item.quantity)}</td></tr>`).join('');
+  const cashDetails = order.paymentMethod === 'Cash'
+    ? `<p>Cash received: ${money(order.cashTendered ?? 0)}</p><p>Change: ${money(order.change ?? 0)}</p>`
+    : '';
+  popup.document.write(`<!doctype html><html><head><title>Receipt #${escape(order.id)}</title><meta charset="utf-8"><style>body{font:14px ui-monospace,monospace;max-width:320px;margin:24px auto;color:#111}h1,p{text-align:center;margin:6px 0}table{width:100%;border-collapse:collapse;margin:20px 0}td{padding:6px 0;border-bottom:1px dashed #aaa}td:last-child{text-align:right;white-space:nowrap}.total{font-weight:bold;border-top:2px solid #111;padding-top:10px}.small{font-size:11px;color:#444}@media print{body{margin:0 auto}}</style></head><body><h1>${escape(storeName)}</h1><p>${escape(location)}</p><p class="small">Order #${escape(order.id)}</p><p class="small">${escape(new Date(order.createdAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }))}</p><table>${rows}</table><p class="total">Total: ${money(order.totalAmount)}</p><p>Payment: ${escape(order.paymentMethod)}</p>${cashDetails}<p class="small">Thank you!</p></body></html>`);
+  popup.document.close();
+  popup.focus();
+  popup.print();
+  return true;
+}
 
 const rolePermissionOptions: {
   value: RolePermission;
@@ -438,8 +473,16 @@ export function PosPage() {
     },
   });
   const createOrder = useCreateOrder();
-  const { queue, add, remove } = useOfflineQueue();
+  const { queue, loadError: queueLoadError, retryVersion, add, update: updateQueuedOrder, remove, retry } = useOfflineQueue();
+  const queueRef = useRef(queue);
+  queueRef.current = queue;
   const isFlushingQueue = useRef(false);
+  const retryAttempts = useRef<Record<string, number>>({});
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const createOrderAsync = useRef(createOrder.mutateAsync);
+  createOrderAsync.current = createOrder.mutateAsync;
+  const [autoRetryVersion, setAutoRetryVersion] = useState(0);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [cart, setCart] = useState<Record<number, number>>({});
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
   const [category, setCategory] = useState('All');
@@ -463,51 +506,71 @@ export function PosPage() {
   const total = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const cashValue = Number(cash) || 0;
 
+  useEffect(() => () => {
+    if (retryTimer.current) clearTimeout(retryTimer.current);
+  }, []);
+
   useEffect(() => {
-    const syncQueue = () => {
-      if (!navigator.onLine || !queue.length || isFlushingQueue.current) return;
-      isFlushingQueue.current = true;
-      let remaining = queue.length;
-      queue.forEach((queued) => {
-        const { localId, createdAt: _createdAt, ...orderData } = queued;
-        createOrder.mutate(
-          { data: orderData },
-          {
-            onSuccess: () => {
-              remove(localId);
-              void queryClient.invalidateQueries({
-                queryKey: getListProductsQueryKey(),
-              });
-              remaining -= 1;
-              if (!remaining) {
-                isFlushingQueue.current = false;
-                setNotice({
-                  message: 'Offline tickets synced. Your ledger is current.',
-                  tone: 'success',
-                });
-              }
-            },
-            onError: (error) => {
-              if (hasHttpStatus(error, 409)) {
-                setNotice({
-                  message: 'An offline ticket has more items than the current stock. Review the ticket and contact the cashier.',
-                  tone: 'error',
-                });
-                void queryClient.invalidateQueries({
-                  queryKey: getListProductsQueryKey(),
-                });
-              }
-              remaining -= 1;
-              if (!remaining) isFlushingQueue.current = false;
-            },
-          },
-        );
-      });
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
     };
-    window.addEventListener('online', syncQueue);
-    syncQueue();
-    return () => window.removeEventListener('online', syncQueue);
-  }, [queue, remove, queryClient, productsQuery.data]);
+  }, []);
+
+  useEffect(() => {
+    if (!isOnline || !queue.length || isFlushingQueue.current) return;
+    const firstBlocked = queue.find((item) => item.state === 'needs_attention');
+    if (firstBlocked) return;
+
+    const syncInOrder = async () => {
+      isFlushingQueue.current = true;
+      try {
+        const processed = new Set<string>();
+        while (true) {
+          const queued = queueRef.current.find((item) => item.state === 'waiting' && !processed.has(item.localId));
+          if (!queued) break;
+          processed.add(queued.localId);
+          const { localId, createdAt: _createdAt, state: _state, lastAttemptAt: _lastAttemptAt, lastError: _lastError, ...orderData } = queued;
+          await updateQueuedOrder(localId, { state: 'syncing', lastAttemptAt: new Date().toISOString(), lastError: undefined });
+          try {
+            await createOrderAsync.current({ data: orderData });
+            await remove(localId);
+            delete retryAttempts.current[localId];
+            void queryClient.invalidateQueries({ queryKey: getListProductsQueryKey() });
+            void queryClient.invalidateQueries({ queryKey: getListOrdersQueryKey() });
+            void queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+          } catch (error) {
+            const status = typeof error === 'object' && error !== null && 'status' in error
+              ? Number(error.status)
+              : undefined;
+            const needsAttention = (status !== undefined && status >= 400 && status < 500) || hasHttpStatus(error, 409);
+            const message = getApiErrorMessage(error) ?? (needsAttention
+              ? 'This ticket needs review before it can sync.'
+              : 'Connection failed. It will retry automatically.');
+            await updateQueuedOrder(localId, {
+              state: needsAttention ? 'needs_attention' : 'waiting',
+              lastError: message,
+            });
+            if (hasHttpStatus(error, 409)) void queryClient.invalidateQueries({ queryKey: getListProductsQueryKey() });
+            if (!needsAttention) {
+              const attempt = (retryAttempts.current[localId] ?? 0) + 1;
+              retryAttempts.current[localId] = attempt;
+              const delay = Math.min(60_000, 2_000 * 2 ** Math.min(attempt - 1, 5));
+              retryTimer.current = setTimeout(() => setAutoRetryVersion((version) => version + 1), delay);
+            }
+            break;
+          }
+        }
+      } finally {
+        isFlushingQueue.current = false;
+      }
+    };
+    void syncInOrder();
+  }, [queue.length, isOnline, retryVersion, autoRetryVersion, remove, updateQueuedOrder, queryClient]);
 
   const addItem = (product: Product) => {
     if ((cart[product.id] ?? 0) >= availableStock(product)) {
@@ -566,14 +629,12 @@ export function PosPage() {
       offlineId: `counter-${crypto.randomUUID()}`,
     };
     if (!navigator.onLine) {
-      add(order);
-      setCart({});
-      setCash('');
-      setMobileCartOpen(false);
-      setNotice({
-        message: 'Saved on this device. It will sync when you are back online.',
-        tone: 'success',
-      });
+      void add(order).then(() => {
+        setCart({});
+        setCash('');
+        setMobileCartOpen(false);
+        setNotice({ message: 'Saved on this device. It will sync when you are back online.', tone: 'success' });
+      }).catch(() => setNotice({ message: 'Could not save this ticket on the device. Keep the order open and try again.', tone: 'error' }));
       return;
     }
     createOrder.mutate(
@@ -584,7 +645,7 @@ export function PosPage() {
           setCash('');
           setMobileCartOpen(false);
           setNotice({
-            message: 'Payment complete. Receipt is ready.',
+            message: 'Payment complete. You can print the receipt from order history.',
             tone: 'success',
           });
           queryClient.invalidateQueries({ queryKey: getListOrdersQueryKey() });
@@ -595,7 +656,7 @@ export function PosPage() {
             queryKey: getGetDashboardSummaryQueryKey(),
           });
         },
-        onError: (error) => {
+        onError: async (error) => {
           if (hasHttpStatus(error, 409)) {
             void productsQuery.refetch();
             setNotice({
@@ -604,14 +665,15 @@ export function PosPage() {
             });
             return;
           }
-          add(order);
-          setCart({});
-          setCash('');
-          setMobileCartOpen(false);
-          setNotice({
-            message: 'Network missed it. Order saved offline for sync.',
-            tone: 'success',
-          });
+          try {
+            await add(order);
+            setCart({});
+            setCash('');
+            setMobileCartOpen(false);
+            setNotice({ message: 'Network missed it. Order saved offline for sync.', tone: 'success' });
+          } catch {
+            setNotice({ message: 'Could not save this ticket on the device. Keep the order open and try again.', tone: 'error' });
+          }
         },
       },
     );
@@ -784,19 +846,55 @@ export function PosPage() {
           </div>
         }
       />
-      {queue.length > 0 && (
-        <div
-          data-testid="status-offline-queue"
-          className="mb-3 flex items-center gap-3 rounded-xl border border-[#edca91] bg-[#fff5e5] px-3 py-2 text-xs text-[#825016] md:mb-5 md:px-4 md:py-3 md:text-sm"
-        >
-          <WifiOffIcon />
-          <span>
-            <strong>
-              {queue.length} order{queue.length > 1 ? 's' : ''} waiting to sync.
-            </strong>{' '}
-            Keep serving; Ulamify will send them when the connection returns.
-          </span>
+      {queueLoadError && (
+        <div role="alert" className="mb-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+          {queueLoadError} Avoid closing this app until the device storage issue is resolved.
         </div>
+      )}
+      {queue.length > 0 && (
+        <section data-testid="status-offline-queue" className="mb-3 rounded-xl border border-[#edca91] bg-[#fff5e5] p-3 text-xs text-[#825016] md:mb-5 md:p-4">
+          <div className="flex items-center gap-2">
+            <WifiOffIcon />
+            <div>
+              <strong>{queue.length} ticket{queue.length === 1 ? '' : 's'} on this device</strong>
+              <p className="mt-0.5">{isOnline ? 'Syncing saved tickets in order.' : 'Tickets will sync when the connection returns.'}</p>
+            </div>
+          </div>
+          <div className="mt-2 divide-y divide-[#edca91]">
+            {queue.map((ticket) => (
+              <div key={ticket.localId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-[#67400f]">
+                    {ticket.items.map((item) => `${item.quantity}× ${products.find((product) => product.id === item.productId)?.name ?? `item ${item.productId}`}`).join(', ')} · {money(ticket.totalAmount)}
+                  </p>
+                  <p className="mt-0.5 text-[10px]">
+                    {dateLabel(ticket.createdAt)} · {ticket.state === 'needs_attention' ? 'Needs attention' : ticket.state === 'syncing' ? 'Syncing' : 'Waiting to sync'}
+                    {ticket.lastError ? ` — ${ticket.lastError}` : ''}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  {ticket.state === 'needs_attention' && (
+                    <button type="button" onClick={() => void retry(ticket.localId)} className="rounded-lg border border-[#b77a27] px-2.5 py-1.5 font-bold">
+                      Retry
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={ticket.state === 'syncing'}
+                    onClick={() => {
+                      if (window.confirm('Discard this unsynced ticket from this device? It will not be recorded as a sale.')) {
+                        void remove(ticket.localId).catch(() => setNotice({ message: 'Could not remove the saved ticket from this device.', tone: 'error' }));
+                      }
+                    }}
+                    className="rounded-lg border border-[#b77a27] px-2.5 py-1.5 font-bold disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
       <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px] md:gap-6">
         <section>
@@ -970,7 +1068,6 @@ export function DashboardPage() {
     todaySales: 0,
     orderCount: 0,
     averageOrder: 0,
-    pendingOrders: 0,
     lowStockCount: 0,
     expenseTotal: 0,
     topProduct: null,
@@ -1022,7 +1119,13 @@ export function DashboardPage() {
     >
       <PageHeading
         hideOnMobile
-        eyebrow="Wednesday · July 24, 2024"
+        eyebrow={new Date().toLocaleDateString('en-PH', {
+          weekday: 'long',
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric',
+          timeZone: 'Asia/Manila',
+        })}
         title="The day at a glance."
         detail="A clean read on your counter, your kitchen, and what needs your eye before lunch rush."
         action={
@@ -1047,6 +1150,12 @@ export function DashboardPage() {
       )}
       {summaryQuery.isLoading ? (
         <LoadingBlocks />
+      ) : summaryQuery.isError && !summaryQuery.data ? (
+        <div role="alert" className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+          <p className="font-bold">Today’s figures could not be loaded.</p>
+          <p className="mt-1 text-xs">The dashboard is not showing estimated or placeholder totals.</p>
+          <button type="button" onClick={() => void summaryQuery.refetch()} className="mt-3 rounded-lg border border-current px-3 py-2 text-xs font-bold">Try again</button>
+        </div>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
@@ -1066,47 +1175,21 @@ export function DashboardPage() {
               trend="up"
             />
             <StatCard
-              label="To prepare"
-              value={String(summary.pendingOrders)}
-              detail="orders need kitchen eyes"
-              icon={Clock3}
+              label="Low servings"
+              value={String(summary.lowStockCount)}
+              detail="menu items at 5 servings or fewer"
+              icon={AlertTriangle}
               accent="orange"
             />
             <StatCard
               label="Expenses"
               value={compactMoney(summary.expenseTotal)}
-              detail="logged from palengke"
+              detail="recorded today"
               icon={WalletCards}
               accent="red"
             />
           </div>
-          <div className="mt-4 grid gap-3 md:mt-6 md:gap-6 xl:grid-cols-[1.4fr_.8fr]">
-            <section className="rounded-2xl border border-card-border bg-card p-3 shadow-sm sm:p-5 md:p-6">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-[.18em] text-muted-foreground">Shift pulse</p>
-                  <h3 className="mt-1 font-display text-xl font-bold md:text-2xl">Healthy start, watch the noon lift.</h3>
-                </div>
-                <span className="whitespace-nowrap rounded-full bg-[#dcefe9] px-2 py-1 text-[9px] font-bold text-[#176557] sm:px-2.5 sm:text-[10px] md:px-3 md:text-xs">
-                  On track
-                </span>
-              </div>
-              <div className="mt-4 flex h-28 items-end gap-1.5 border-b border-border pb-0 sm:mt-6 sm:h-36 sm:gap-2 md:mt-8 md:h-44">
-                {[38, 52, 47, 66, 58, 78, 64, 88, 74, 98, 82, 91].map((height, index) => (
-                  <div key={index} className="group flex flex-1 flex-col items-center gap-2">
-                    <div
-                      className={`w-full max-w-[34px] rounded-t-md transition hover:opacity-80 ${index === 9 ? 'bg-primary' : 'bg-[#e8d7af]'}`}
-                      style={{ height: `${height}%` }}
-                    />
-                    <span className="font-mono-ui text-[8px] text-muted-foreground sm:text-[9px]">{index + 8}am</span>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-3 flex items-center justify-between gap-2 text-[10px] text-muted-foreground sm:mt-4 sm:text-xs">
-                <span>Counter rhythm · last 4 hours</span>
-                <span className="font-mono-ui text-foreground">{money(summary.todaySales)} gross</span>
-              </div>
-            </section>
+          <div className="mt-4 grid gap-3 md:mt-6 md:gap-6 xl:grid-cols-[.8fr_1fr]">
             <section className="rounded-2xl border border-card-border bg-sidebar p-3 text-sidebar-foreground shadow-sm sm:p-5 md:p-6">
               <div className="flex items-start justify-between">
                 <div>
@@ -1222,6 +1305,17 @@ export function OrdersPage() {
   const voidRequestsQuery = useListVoidRequests({
     query: { queryKey: getListVoidRequestsQueryKey(), enabled: isOwner },
   });
+  const storeProfileQuery = useGetStoreProfile();
+  const [businessDate, setBusinessDate] = useState(businessDateToday);
+  const [openingCash, setOpeningCash] = useState('');
+  const [cashPaidOut, setCashPaidOut] = useState('0');
+  const [countedCash, setCountedCash] = useState('');
+  const [closeNote, setCloseNote] = useState('');
+  const dayCloseQuery = useGetDayClose(
+    { businessDate },
+    { query: { queryKey: getGetDayCloseQueryKey({ businessDate }) } },
+  );
+  const createDayClose = useCreateDayClose();
 
   const createVoid = useCreateVoidRequest();
   const approveVoid = useApproveVoidRequest();
@@ -1232,6 +1326,15 @@ export function OrdersPage() {
   const [restockVoidIds, setRestockVoidIds] = useState<number[]>([]);
 
   const pendingVoidRequests = voidRequestsQuery.data ?? [];
+  const dayClose = dayCloseQuery.data;
+  const dayCloseTotals = dayClose ?? {
+    cashSales: 0,
+    gcashSales: 0,
+    mayaSales: 0,
+    orderCount: 0,
+    expenseTotal: 0,
+    close: null,
+  };
   const orders = (ordersQuery.data ?? []).filter(
     (order) =>
       (filter === 'All' || order.paymentMethod === filter) &&
@@ -1319,6 +1422,78 @@ export function OrdersPage() {
           </button>
         }
       />
+
+      <section className="mb-4 rounded-2xl border border-card-border bg-card p-3 shadow-sm sm:mb-6 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[.18em] text-muted-foreground">Daily close</p>
+            <h2 className="mt-1 font-display text-lg font-bold sm:text-xl">Count the drawer</h2>
+          </div>
+          <label className="text-[10px] font-bold text-muted-foreground sm:text-xs">
+            Business date
+            <input type="date" value={businessDate} onChange={(event) => setBusinessDate(event.target.value)} className="ml-2 h-9 rounded-lg border border-input bg-background px-2 text-xs text-foreground" />
+          </label>
+        </div>
+        {dayCloseQuery.isError ? (
+          <div role="alert" className="mt-3 text-xs text-destructive">Daily sales could not load. <button type="button" className="font-bold underline" onClick={() => void dayCloseQuery.refetch()}>Retry</button></div>
+        ) : (
+          <>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+              {[
+                ['Cash sales', dayCloseTotals.cashSales],
+                ['GCash', dayCloseTotals.gcashSales],
+                ['Maya', dayCloseTotals.mayaSales],
+                ['Orders', dayCloseTotals.orderCount],
+                ['Expenses', dayCloseTotals.expenseTotal],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl bg-muted/50 p-2.5">
+                  <p className="text-[10px] font-semibold text-muted-foreground">{label}</p>
+                  <p className="mt-1 font-mono-ui text-sm font-bold">{label === 'Orders' ? value : money(Number(value))}</p>
+                </div>
+              ))}
+            </div>
+            {dayCloseTotals.close ? (
+              <div className="mt-3 rounded-xl border border-border p-3 text-xs">
+                <p className="font-bold">Closed by {dayCloseTotals.close.closedBy ?? 'staff'} · {time(dayCloseTotals.close.closedAt)}</p>
+                <p className="mt-1">Expected {money(dayCloseTotals.close.expectedCash)} · Counted {money(dayCloseTotals.close.countedCash)} · Variance <strong className={dayCloseTotals.close.variance === 0 ? '' : 'text-destructive'}>{money(dayCloseTotals.close.variance)}</strong></p>
+                <p className="mt-1 text-muted-foreground">Opening cash {money(dayCloseTotals.close.openingCash)} + cash sales {money(dayCloseTotals.close.cashSales)} − cash paid out {money(dayCloseTotals.close.cashPaidOut)}</p>
+                {dayCloseTotals.close.note && <p className="mt-1 text-muted-foreground">{dayCloseTotals.close.note}</p>}
+              </div>
+            ) : (
+              <form
+                className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_1fr_2fr_auto]"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const opening = Number(openingCash);
+                  const paidOut = Number(cashPaidOut);
+                  const counted = Number(countedCash);
+                  if (!openingCash || !countedCash || !Number.isFinite(opening) || !Number.isFinite(paidOut) || !Number.isFinite(counted) || opening < 0 || paidOut < 0 || counted < 0) {
+                    setNotice({ message: 'Enter valid opening, paid-out, and counted cash amounts.', tone: 'error' });
+                    return;
+                  }
+                  if (Math.abs(counted - (opening + dayCloseTotals.cashSales - paidOut)) > 0.01 && !closeNote.trim()) {
+                    setNotice({ message: 'Add a short note explaining the cash difference.', tone: 'error' });
+                    return;
+                  }
+                  createDayClose.mutate({ data: { businessDate, openingCash: opening, cashPaidOut: paidOut, countedCash: counted, note: closeNote.trim() || null } }, {
+                    onSuccess: () => {
+                      void queryClient.invalidateQueries({ queryKey: getGetDayCloseQueryKey({ businessDate }) });
+                      setNotice({ message: 'Daily cash close saved.', tone: 'success' });
+                    },
+                    onError: (error) => setNotice({ message: getApiErrorMessage(error) ?? 'Could not save the daily close.', tone: 'error' }),
+                  });
+                }}
+              >
+                <label className="text-[10px] font-bold text-muted-foreground">Opening cash<input required min="0" step="0.01" inputMode="decimal" type="number" value={openingCash} onChange={(event) => setOpeningCash(event.target.value)} className="mt-1 h-9 w-full rounded-lg border border-input bg-background px-2 font-mono-ui text-xs text-foreground" /></label>
+                <label className="text-[10px] font-bold text-muted-foreground">Cash paid out<input required min="0" step="0.01" inputMode="decimal" type="number" value={cashPaidOut} onChange={(event) => setCashPaidOut(event.target.value)} className="mt-1 h-9 w-full rounded-lg border border-input bg-background px-2 font-mono-ui text-xs text-foreground" /></label>
+                <label className="text-[10px] font-bold text-muted-foreground">Counted cash<input required min="0" step="0.01" inputMode="decimal" type="number" value={countedCash} onChange={(event) => setCountedCash(event.target.value)} className="mt-1 h-9 w-full rounded-lg border border-input bg-background px-2 font-mono-ui text-xs text-foreground" /></label>
+                <label className="text-[10px] font-bold text-muted-foreground">Note (optional)<input maxLength={500} value={closeNote} onChange={(event) => setCloseNote(event.target.value)} className="mt-1 h-9 w-full rounded-lg border border-input bg-background px-2 text-xs text-foreground" /></label>
+                <button type="submit" disabled={createDayClose.isPending || dayCloseQuery.isLoading} className="h-9 self-end rounded-lg bg-primary px-3 text-xs font-bold text-primary-foreground disabled:opacity-50">{createDayClose.isPending ? 'Saving…' : 'Close day'}</button>
+              </form>
+            )}
+          </>
+        )}
+      </section>
 
       {/* Void Requests Panel for Owner */}
       {isOwner && pendingVoidRequests.length > 0 && (
@@ -1459,15 +1634,28 @@ export function OrdersPage() {
                     {order.status === 'voided' ? 'Voided' : order.synced ? 'Synced' : 'Local'}
                   </span>
                   <div className="col-start-2 row-start-3 self-start justify-self-end md:col-auto md:row-auto md:self-auto">
-                    {order.status !== 'voided' && (
+                    <div className="flex flex-wrap justify-end gap-1.5">
                       <button
-                        onClick={() => handleRequestVoid(order.id)}
-                        disabled={createVoid.isPending}
-                        className="rounded-lg border border-border px-2 py-1 text-[9px] font-bold text-muted-foreground hover:border-destructive hover:text-destructive sm:px-2.5 sm:text-[11px]"
+                        type="button"
+                        onClick={() => {
+                          if (!printOrderReceipt(order, storeProfileQuery.data?.name ?? 'Ulamify POS', storeProfileQuery.data?.location ?? '')) {
+                            setNotice({ message: 'Allow pop-ups to print this receipt.', tone: 'error' });
+                          }
+                        }}
+                        className="rounded-lg border border-border px-2 py-1 text-[9px] font-bold text-muted-foreground hover:border-primary hover:text-foreground sm:px-2.5 sm:text-[11px]"
                       >
-                        Request Void
+                        Print receipt
                       </button>
-                    )}
+                      {order.status !== 'voided' && (
+                        <button
+                          onClick={() => handleRequestVoid(order.id)}
+                          disabled={createVoid.isPending}
+                          className="rounded-lg border border-border px-2 py-1 text-[9px] font-bold text-muted-foreground hover:border-destructive hover:text-destructive sm:px-2.5 sm:text-[11px]"
+                        >
+                          Request Void
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -2222,9 +2410,11 @@ export function InventoryPage() {
   const marketRunsQuery = useListMarketRuns({
     query: { queryKey: getListMarketRunsQueryKey(), staleTime: 30_000 },
   });
+  const productsQuery = useListProducts({ query: { queryKey: getListProductsQueryKey(), staleTime: 30_000 } });
   const createInventoryIngredient = useCreateInventoryIngredient();
   const createInventoryReceipt = useCreateInventoryReceipt();
   const createInventoryAdjustment = useCreateInventoryAdjustment();
+  const createPreparedStockAdjustment = useCreatePreparedStockAdjustment();
   const [ingredientOpen, setIngredientOpen] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [adjustmentTarget, setAdjustmentTarget] = useState<InventoryIngredient | null>(null);
@@ -2238,8 +2428,28 @@ export function InventoryPage() {
   const [adjustmentQuantity, setAdjustmentQuantity] = useState('');
   const [adjustmentCost, setAdjustmentCost] = useState('');
   const [adjustmentNotes, setAdjustmentNotes] = useState('');
+  const [adjustmentReason, setAdjustmentReason] = useState<'opening_count' | 'closing_count' | 'spoiled' | 'staff_meal' | 'correction'>('correction');
+  const [movementTarget, setMovementTarget] = useState<InventoryIngredient | null>(null);
+  const [preparedTarget, setPreparedTarget] = useState<Product | null>(null);
+  const [preparedQuantity, setPreparedQuantity] = useState('');
+  const [preparedReason, setPreparedReason] = useState<'opening_count' | 'leftovers' | 'spoiled' | 'staff_meal' | 'correction'>('opening_count');
+  const [preparedNotes, setPreparedNotes] = useState('');
+  const [preparedHistoryTarget, setPreparedHistoryTarget] = useState<Product | null>(null);
   const [notice, setNotice] = useNoticeState();
   const inventoryIngredients = inventoryQuery.data ?? [];
+  const preparedProducts = (productsQuery.data ?? []).filter((product) => !product.isArchived);
+  const movementQuery = useListInventoryMovements(movementTarget?.id ?? 0, {
+    query: {
+      queryKey: getListInventoryMovementsQueryKey(movementTarget?.id ?? 0),
+      enabled: movementTarget !== null,
+    },
+  });
+  const preparedMovementQuery = useListPreparedStockMovements(preparedHistoryTarget?.id ?? 0, {
+    query: {
+      queryKey: getListPreparedStockMovementsQueryKey(preparedHistoryTarget?.id ?? 0),
+      enabled: preparedHistoryTarget !== null,
+    },
+  });
   const existingIngredientByName = new Map(inventoryIngredients.map((ingredient) => [ingredient.name.trim().toLowerCase(), ingredient]));
   const unlinkedMarketItems = [...(marketRunsQuery.data ?? [])]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -2279,6 +2489,8 @@ export function InventoryPage() {
     void queryClient.invalidateQueries({ queryKey: getListInventoryIngredientsQueryKey() });
     void queryClient.invalidateQueries({ queryKey: getListExpenseLogsQueryKey() });
     void queryClient.invalidateQueries({ queryKey: ['product-cost'] });
+    void queryClient.invalidateQueries({ queryKey: getListProductsQueryKey() });
+    void queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
   };
 
   const submitInventoryIngredient = (event: React.FormEvent<HTMLFormElement>) => {
@@ -2307,6 +2519,7 @@ export function InventoryPage() {
             ingredientId,
             quantityDelta,
             unitCost,
+            reason: 'palengke_import',
             notes: `Imported from Palengke Run #${selectedMarketItem.run.id}`,
           },
         },
@@ -2377,9 +2590,14 @@ export function InventoryPage() {
   const submitInventoryAdjustment = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!adjustmentTarget) return;
-    const quantity = Number(adjustmentQuantity);
-    if (!Number.isFinite(quantity) || quantity === 0 || !adjustmentNotes.trim()) {
-      setNotice({ message: 'Enter a non-zero quantity adjustment and a reason.', tone: 'error' });
+    const enteredQuantity = Number(adjustmentQuantity);
+    const quantity = adjustmentReason === 'opening_count' || adjustmentReason === 'closing_count'
+      ? enteredQuantity - adjustmentTarget.quantityAvailable
+      : adjustmentReason === 'spoiled' || adjustmentReason === 'staff_meal'
+        ? -Math.abs(enteredQuantity)
+        : enteredQuantity;
+    if (!Number.isFinite(quantity) || quantity === 0) {
+      setNotice({ message: 'The count matches current stock or the quantity is invalid; no adjustment was saved.', tone: 'error' });
       return;
     }
     createInventoryAdjustment.mutate(
@@ -2388,7 +2606,8 @@ export function InventoryPage() {
           ingredientId: adjustmentTarget.id,
           quantityDelta: quantity,
           unitCost: quantity > 0 && adjustmentCost ? Number(adjustmentCost) : undefined,
-          notes: adjustmentNotes.trim(),
+          reason: adjustmentReason,
+          notes: adjustmentNotes.trim() || undefined,
         },
       },
       {
@@ -2403,6 +2622,38 @@ export function InventoryPage() {
         onError: () => setNotice({ message: 'Could not adjust stock. Check available quantity.', tone: 'error' }),
       },
     );
+  };
+
+  const submitPreparedAdjustment = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!preparedTarget) return;
+    const enteredQuantity = Number(preparedQuantity);
+    const delta = preparedReason === 'opening_count'
+      ? enteredQuantity - preparedTarget.stockCount
+      : preparedReason === 'spoiled' || preparedReason === 'staff_meal' || preparedReason === 'leftovers'
+        ? -Math.abs(enteredQuantity)
+        : enteredQuantity;
+    if (!Number.isInteger(enteredQuantity) || delta === 0 || (preparedReason === 'opening_count' ? enteredQuantity < 0 : preparedReason === 'correction' ? enteredQuantity === 0 : enteredQuantity <= 0)) {
+      setNotice({ message: 'Enter a valid serving count or quantity to remove.', tone: 'error' });
+      return;
+    }
+    createPreparedStockAdjustment.mutate({
+      data: {
+        productId: preparedTarget.id,
+        quantityDelta: delta,
+        reason: preparedReason,
+        notes: preparedNotes.trim() || null,
+      },
+    }, {
+      onSuccess: () => {
+        setPreparedTarget(null);
+        setPreparedQuantity('');
+        setPreparedNotes('');
+        invalidateInventory();
+        setNotice({ message: 'Prepared servings updated and recorded in stock history.', tone: 'success' });
+      },
+      onError: () => setNotice({ message: 'Could not update servings. Check the available stock and try again.', tone: 'error' }),
+    });
   };
 
   return (
@@ -2476,7 +2727,7 @@ export function InventoryPage() {
               <article
                 key={ingredient.id}
                 data-testid={`row-inventory-ingredient-${ingredient.id}`}
-                className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 px-3 py-3 sm:gap-4 sm:px-5 sm:py-4"
+                className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-2 px-3 py-3 sm:gap-4 sm:px-5 sm:py-4"
               >
                 <div className="min-w-0">
                   <p className="truncate text-xs font-bold sm:text-sm">{ingredient.name}</p>
@@ -2504,6 +2755,34 @@ export function InventoryPage() {
                 >
                   Adjust
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setMovementTarget(ingredient)}
+                  className="inline-flex h-8 shrink-0 items-center rounded-lg border border-border px-2.5 text-[10px] font-bold text-muted-foreground transition hover:border-primary hover:text-foreground sm:h-9 sm:px-3 sm:text-xs"
+                >
+                  History
+                </button>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="mt-4 overflow-hidden rounded-2xl border border-card-border bg-card shadow-sm sm:mt-6">
+        <div className="border-b border-border px-3 py-3 sm:px-5 sm:py-4">
+          <h3 className="font-display text-base font-bold sm:text-xl">Prepared servings</h3>
+          <p className="mt-1 text-[10px] text-muted-foreground sm:text-xs">Count opening stock or record leftovers, staff meals, and spoilage.</p>
+        </div>
+        {productsQuery.isLoading ? <div className="p-4"><LoadingBlocks /></div> : productsQuery.isError ? (
+          <p className="p-4 text-xs text-destructive">Prepared stock could not load. <button type="button" onClick={() => void productsQuery.refetch()} className="font-bold underline">Retry</button></p>
+        ) : preparedProducts.length === 0 ? (
+          <p className="p-4 text-xs text-muted-foreground">Add an active menu item to count prepared servings.</p>
+        ) : (
+          <div className="divide-y divide-border">
+            {preparedProducts.map((product) => (
+              <article key={product.id} className="flex items-center justify-between gap-3 px-3 py-3 sm:px-5 sm:py-4">
+                <div className="min-w-0"><p className="truncate text-xs font-bold sm:text-sm">{product.name}</p><p className="text-[10px] text-muted-foreground">{product.stockCount} servings on hand</p></div>
+                <div className="flex shrink-0 gap-1.5"><button type="button" onClick={() => { setPreparedTarget(product); setPreparedQuantity(''); setPreparedNotes(''); setPreparedReason('opening_count'); }} className="h-8 rounded-lg border border-border px-3 text-[10px] font-bold sm:h-9 sm:text-xs">Count / waste</button><button type="button" onClick={() => setPreparedHistoryTarget(product)} className="h-8 rounded-lg border border-border px-2.5 text-[10px] font-bold sm:h-9 sm:text-xs">History</button></div>
               </article>
             ))}
           </div>
@@ -2704,19 +2983,26 @@ export function InventoryPage() {
           <DialogHeader className="pr-6 text-left">
             <DialogTitle className="font-display text-lg font-bold">Adjust {adjustmentTarget?.name} stock</DialogTitle>
             <DialogDescription className="text-xs">
-              Use a positive quantity to add stock or a negative quantity for spoilage/corrections. Unit: {adjustmentTarget?.baseUnit}.
+              Enter the physical count for count reasons or the quantity to remove for waste. Unit: {adjustmentTarget?.baseUnit}.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={submitInventoryAdjustment} className="space-y-3">
             <label className="block text-xs font-bold text-muted-foreground">
-              Quantity change ({adjustmentTarget?.baseUnit})
+              Reason
+              <select value={adjustmentReason} onChange={(event) => setAdjustmentReason(event.target.value as typeof adjustmentReason)} className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground">
+                <option value="opening_count">Opening count</option><option value="closing_count">Physical count</option><option value="spoiled">Spoiled / waste</option><option value="staff_meal">Staff meal</option><option value="correction">Correction</option>
+              </select>
+            </label>
+            <label className="block text-xs font-bold text-muted-foreground">
+              {adjustmentReason === 'opening_count' || adjustmentReason === 'closing_count' ? `Counted quantity (${adjustmentTarget?.baseUnit})` : `Quantity (${adjustmentTarget?.baseUnit})`}
               <input
                 required
                 type="number"
+                min={adjustmentReason === 'opening_count' || adjustmentReason === 'closing_count' || adjustmentReason === 'spoiled' || adjustmentReason === 'staff_meal' ? '0' : undefined}
                 step="0.001"
                 value={adjustmentQuantity}
                 onChange={(event) => setAdjustmentQuantity(event.target.value)}
-                placeholder="e.g. -0.5"
+                placeholder={adjustmentReason === 'opening_count' || adjustmentReason === 'closing_count' ? String(adjustmentTarget?.quantityAvailable ?? 0) : 'e.g. 0.5'}
                 className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground"
               />
             </label>
@@ -2736,13 +3022,12 @@ export function InventoryPage() {
               </label>
             )}
             <label className="block text-xs font-bold text-muted-foreground">
-              Reason
+              Note (optional)
               <input
-                required
                 maxLength={500}
                 value={adjustmentNotes}
                 onChange={(event) => setAdjustmentNotes(event.target.value)}
-                placeholder="e.g. spoiled or opening stock"
+                placeholder="Add a short explanation"
                 className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground"
               />
             </label>
@@ -2754,6 +3039,34 @@ export function InventoryPage() {
               {createInventoryAdjustment.isPending ? 'Saving…' : 'Save adjustment'}
             </button>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={movementTarget !== null} onOpenChange={(open) => !open && setMovementTarget(null)}>
+        <DialogContent className="max-h-[85dvh] w-[calc(100%-1.5rem)] max-w-lg overflow-y-auto rounded-2xl p-4 sm:p-6">
+          <DialogHeader className="text-left"><DialogTitle className="font-display text-lg font-bold">{movementTarget?.name} stock history</DialogTitle><DialogDescription className="text-xs">Purchases, recipe use, counts, and waste are listed as audited movements.</DialogDescription></DialogHeader>
+          {movementQuery.isLoading ? <LoadingBlocks /> : movementQuery.isError ? <p className="text-xs text-destructive">Could not load movement history. <button type="button" onClick={() => void movementQuery.refetch()} className="font-bold underline">Retry</button></p> : (movementQuery.data ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No stock movements recorded yet.</p> : (
+            <div className="divide-y divide-border">{movementQuery.data?.map((movement) => <div key={movement.id} className="flex justify-between gap-3 py-2 text-xs"><div><p className="font-bold capitalize">{movement.movementType.replaceAll('_', ' ')}</p><p className="text-[10px] text-muted-foreground">{dateLabel(movement.createdAt)} · {time(movement.createdAt)}{movement.notes ? ` · ${movement.notes}` : ''}</p></div><span className={`shrink-0 font-mono-ui font-bold ${movement.quantityDelta < 0 ? 'text-destructive' : 'text-secondary'}`}>{movement.quantityDelta > 0 ? '+' : ''}{movement.quantityDelta.toLocaleString('en-PH', { maximumFractionDigits: 3 })} {movementTarget?.baseUnit}</span></div>)}</div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={preparedTarget !== null} onOpenChange={(open) => !open && setPreparedTarget(null)}>
+        <DialogContent className="w-[calc(100%-1.5rem)] max-w-md rounded-2xl p-4 sm:p-6">
+          <DialogHeader className="text-left"><DialogTitle className="font-display text-lg font-bold">Count {preparedTarget?.name}</DialogTitle><DialogDescription className="text-xs">Current prepared stock: {preparedTarget?.stockCount} servings. Counts and waste are saved in the operation history.</DialogDescription></DialogHeader>
+          <form onSubmit={submitPreparedAdjustment} className="space-y-3">
+            <label className="block text-xs font-bold text-muted-foreground">Reason<select value={preparedReason} onChange={(event) => setPreparedReason(event.target.value as typeof preparedReason)} className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground"><option value="opening_count">Opening count</option><option value="leftovers">End-of-day leftovers</option><option value="spoiled">Spoiled / waste</option><option value="staff_meal">Staff meal</option><option value="correction">Correction (signed change)</option></select></label>
+            <label className="block text-xs font-bold text-muted-foreground">{preparedReason === 'opening_count' ? 'Counted servings' : preparedReason === 'correction' ? 'Signed serving change' : 'Servings to remove'}<input required type="number" min={preparedReason === 'correction' ? undefined : '1'} step="1" value={preparedQuantity} onChange={(event) => setPreparedQuantity(event.target.value)} placeholder={preparedReason === 'opening_count' ? String(preparedTarget?.stockCount ?? 0) : 'e.g. 2'} className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground" /></label>
+            <label className="block text-xs font-bold text-muted-foreground">Note (optional)<input maxLength={500} value={preparedNotes} onChange={(event) => setPreparedNotes(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground" /></label>
+            <button type="submit" disabled={createPreparedStockAdjustment.isPending} className="h-10 w-full rounded-xl bg-primary text-xs font-bold text-primary-foreground disabled:opacity-50">{createPreparedStockAdjustment.isPending ? 'Saving…' : 'Save count / waste'}</button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={preparedHistoryTarget !== null} onOpenChange={(open) => !open && setPreparedHistoryTarget(null)}>
+        <DialogContent className="max-h-[85dvh] w-[calc(100%-1.5rem)] max-w-lg overflow-y-auto rounded-2xl p-4 sm:p-6">
+          <DialogHeader className="text-left"><DialogTitle className="font-display text-lg font-bold">{preparedHistoryTarget?.name} serving history</DialogTitle><DialogDescription className="text-xs">Counts, leftover adjustments, staff meals, spoilage, and batch production.</DialogDescription></DialogHeader>
+          {preparedMovementQuery.isLoading ? <LoadingBlocks /> : preparedMovementQuery.isError ? <p className="text-xs text-destructive">Could not load serving history. <button type="button" onClick={() => void preparedMovementQuery.refetch()} className="font-bold underline">Retry</button></p> : (preparedMovementQuery.data ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No manual count or waste records yet.</p> : <div className="divide-y divide-border">{preparedMovementQuery.data?.map((movement) => <div key={movement.id} className="flex justify-between gap-3 py-2 text-xs"><div><p className="font-bold">{movement.details}</p><p className="text-[10px] text-muted-foreground">{dateLabel(movement.createdAt)} · {time(movement.createdAt)}</p></div><span className={`shrink-0 font-mono-ui font-bold ${movement.servings < 0 ? 'text-destructive' : 'text-secondary'}`}>{movement.servings > 0 ? '+' : ''}{movement.servings} servings</span></div>)}</div>}
         </DialogContent>
       </Dialog>
       {notice && <Notice {...notice} onClose={() => setNotice(null)} />}
@@ -2787,8 +3100,16 @@ export function PurchasingPage() {
   const marketRunsQuery = useListMarketRuns({
     query: { queryKey: getListMarketRunsQueryKey(), staleTime: 30_000 },
   });
+  const expensesQuery = useListExpenseLogs({ query: { queryKey: getListExpenseLogsQueryKey(), staleTime: 30_000 } });
   const createMarketRun = useCreateMarketRun();
+  const createExpenseLog = useCreateExpenseLog();
   const [marketRunOpen, setMarketRunOpen] = useState(false);
+  const [expenseOpen, setExpenseOpen] = useState(false);
+  const [expenseAmount, setExpenseAmount] = useState('');
+  const [expenseDetails, setExpenseDetails] = useState('');
+  const [expenseCategory, setExpenseCategory] = useState<'supplies' | 'delivery' | 'other'>('supplies');
+  const [expenseDate, setExpenseDate] = useState(businessDateToday());
+  const [expenseNotes, setExpenseNotes] = useState('');
   const [marketSearch, setMarketSearch] = useState('');
   const [marketSupplier, setMarketSupplier] = useState('');
   const [marketDeliveryFee, setMarketDeliveryFee] = useState('');
@@ -2802,6 +3123,7 @@ export function PurchasingPage() {
       .toLowerCase()
       .includes(marketSearch.trim().toLowerCase()),
   );
+  const nonInventoryExpenses = (expensesQuery.data ?? []).filter((expense) => expense.category !== 'ingredients');
 
   const invalidateInventory = () => {
     void queryClient.invalidateQueries({ queryKey: getListInventoryIngredientsQueryKey() });
@@ -2869,6 +3191,29 @@ export function PurchasingPage() {
     );
   };
 
+  const submitNonInventoryExpense = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    createExpenseLog.mutate({ data: {
+      amount: Number(expenseAmount),
+      details: expenseDetails.trim(),
+      category: expenseCategory,
+      date: expenseDate,
+      notes: expenseNotes.trim() || null,
+    } }, {
+      onSuccess: () => {
+        setExpenseOpen(false);
+        setExpenseAmount('');
+        setExpenseDetails('');
+        setExpenseNotes('');
+        void queryClient.invalidateQueries({ queryKey: getListExpenseLogsQueryKey() });
+        void queryClient.invalidateQueries({ queryKey: getGetDayCloseQueryKey() });
+        void queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+        setNotice({ message: 'Non-inventory expense recorded.', tone: 'success' });
+      },
+      onError: () => setNotice({ message: 'Could not record expense. Check the date and amount.', tone: 'error' }),
+    });
+  };
+
   const marketDeliveryFeeNum = Number(marketDeliveryFee) || 0;
   const marketMajorTotal = marketItems
     .filter((item) => item.itemType === 'major_ingredient')
@@ -2883,7 +3228,7 @@ export function PurchasingPage() {
         hideTextOnMobile
         eyebrow="Purchasing history · Recent first"
         title="Market trips"
-        detail="Review market purchases, landed costs, and delivery fares."
+        detail="Record Palengke purchases, transport fare, and day-to-day non-inventory expenses."
         action={
           <div className="flex w-full min-w-0 items-center gap-2 md:w-auto">
             <div className="relative min-w-0 flex-1 md:w-56 md:flex-none">
@@ -2899,6 +3244,13 @@ export function PurchasingPage() {
             </div>
             <button
               type="button"
+              onClick={() => setExpenseOpen(true)}
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 text-xs font-bold text-secondary md:h-10 sm:px-4"
+            >
+              <Plus size={14} /> <span className="whitespace-nowrap">Add expense</span>
+            </button>
+            <button
+              type="button"
               onClick={() => setMarketRunOpen(true)}
               className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-primary px-3 text-xs font-bold text-primary-foreground shadow-sm transition hover:brightness-95 md:h-10 sm:px-4"
             >
@@ -2907,6 +3259,10 @@ export function PurchasingPage() {
           </div>
         }
       />
+      <section className="mb-4 rounded-2xl border border-card-border bg-card p-3 shadow-sm sm:mb-6 sm:p-5">
+        <div className="mb-3 flex items-center justify-between gap-2"><div><h3 className="font-display text-base font-bold sm:text-lg">Other expenses</h3><p className="text-[10px] text-muted-foreground sm:text-xs">Gas, packaging, cleaning, and similar costs. These do not create ingredient stock.</p></div><span className="rounded-full bg-muted px-2.5 py-1 text-[10px] font-bold">{nonInventoryExpenses.length} records</span></div>
+        {expensesQuery.isLoading ? <p className="text-xs text-muted-foreground">Loading expenses…</p> : expensesQuery.isError ? <p className="text-xs text-destructive">Expenses could not load. <button type="button" onClick={() => void expensesQuery.refetch()} className="font-bold underline">Retry</button></p> : nonInventoryExpenses.length === 0 ? <p className="text-xs text-muted-foreground">No non-inventory expenses recorded recently.</p> : <div className="divide-y divide-border">{nonInventoryExpenses.slice(0, 12).map((expense) => <div key={expense.id} className="flex items-center justify-between gap-3 py-2 text-xs"><div className="min-w-0"><p className="truncate font-bold">{expense.details}</p><p className="text-[10px] capitalize text-muted-foreground">{expense.category ?? 'other'} · {dateLabel(expense.createdAt)}{expense.notes ? ` · ${expense.notes}` : ''}</p></div><span className="shrink-0 font-mono-ui font-bold">{money(expense.amount)}</span></div>)}</div>}
+      </section>
       {marketRunsQuery.isLoading ? (
         <LoadingBlocks />
       ) : marketRunsQuery.isError ? (
@@ -2971,7 +3327,7 @@ export function PurchasingPage() {
       )}
 
       <Dialog open={marketRunOpen} onOpenChange={setMarketRunOpen}>
-        <DialogContent className="w-[calc(100%-1.5rem)] max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl p-4 sm:p-6">
+        <DialogContent className="w-[calc(100%-1.5rem)] max-w-4xl max-h-[90dvh] overflow-y-auto rounded-2xl p-4 sm:p-6">
           <DialogHeader className="pr-6 text-left">
             <DialogTitle className="font-display text-lg font-bold flex items-center gap-2">
               <ShoppingBag className="text-secondary" size={20} /> Log market trip
@@ -3031,7 +3387,7 @@ export function PurchasingPage() {
 
                   return (
                     <div key={index} className="rounded-xl border border-border bg-muted/20 p-3 space-y-2">
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-12 items-center">
+                      <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-12">
                         <div className="sm:col-span-4">
                           <label className="mb-1 block text-[9px] font-bold text-muted-foreground">Item Name / Ingredient</label>
                           <input
@@ -3047,7 +3403,10 @@ export function PurchasingPage() {
                           <label className="mb-1 block text-[9px] font-bold text-muted-foreground">Category</label>
                           <select
                             value={item.itemType}
-                            onChange={(e) => updateMarketItemRow(index, { itemType: e.target.value as MarketItemDraft['itemType'] })}
+                            onChange={(e) => {
+                              const itemType = e.target.value as MarketItemDraft['itemType'];
+                              updateMarketItemRow(index, { itemType, ...(['major_ingredient', 'pantry_item'].includes(itemType) ? {} : { ingredientId: '' }) });
+                            }}
                             className="h-9 w-full rounded-lg border border-input bg-card px-2 text-xs outline-none focus:border-primary"
                           >
                             <option value="major_ingredient">Major Ingredient</option>
@@ -3057,9 +3416,9 @@ export function PurchasingPage() {
                           </select>
                         </div>
 
-                        <div className="sm:col-span-2">
-                          <label className="mb-1 block text-[9px] font-bold text-muted-foreground">Quantity & Unit</label>
-                          <div className="flex gap-1">
+                        <div className="sm:col-span-3">
+                          <label className="mb-1 block text-[10px] font-bold text-muted-foreground">Quantity & Unit</label>
+                          <div className="flex min-w-0 gap-1.5">
                             <input
                               type="number"
                               min="0.001"
@@ -3068,12 +3427,12 @@ export function PurchasingPage() {
                               onChange={(e) => updateMarketItemRow(index, { quantity: e.target.value })}
                               placeholder="Qty"
                               required
-                              className="h-9 w-full min-w-0 rounded-lg border border-input bg-card px-2 text-xs font-mono-ui outline-none focus:border-primary"
+                              className="h-10 min-w-0 flex-1 rounded-lg border border-input bg-card px-3 text-sm font-mono-ui outline-none focus:border-primary"
                             />
                             <select
                               value={item.unit}
                               onChange={(e) => updateMarketItemRow(index, { unit: e.target.value as InventoryPurchaseUnitType })}
-                              className="h-9 rounded-lg border border-input bg-card px-1 text-xs outline-none focus:border-primary"
+                              className="h-10 w-20 shrink-0 rounded-lg border border-input bg-card px-2 text-sm outline-none focus:border-primary"
                             >
                               <option value="kg">kg</option>
                               <option value="g">g</option>
@@ -3085,7 +3444,7 @@ export function PurchasingPage() {
                         </div>
 
                         <div className="sm:col-span-2">
-                          <label className="mb-1 block text-[9px] font-bold text-muted-foreground">Total Cost (₱)</label>
+                          <label className="mb-1 block text-[10px] font-bold text-muted-foreground">Total Cost (₱)</label>
                           <input
                             type="number"
                             min="0.01"
@@ -3094,25 +3453,21 @@ export function PurchasingPage() {
                             onChange={(e) => updateMarketItemRow(index, { totalCost: e.target.value })}
                             placeholder="0.00"
                             required
-                            className="h-9 w-full rounded-lg border border-input bg-card px-2 text-xs font-mono-ui outline-none focus:border-primary"
+                            className="h-10 w-full min-w-0 rounded-lg border border-input bg-card px-2.5 text-sm font-mono-ui outline-none focus:border-primary"
                           />
                         </div>
 
-                        <div className="sm:col-span-1 flex justify-end pt-3 sm:pt-0">
-                          {marketItems.length > 1 && (
-                            <button
-                              type="button"
-                              aria-label={`Remove item ${index + 1}`}
-                              onClick={() => removeMarketItemRow(index)}
-                              className="rounded-lg p-1.5 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"
-                            >
-                              <X size={16} />
-                            </button>
-                          )}
-                        </div>
                       </div>
 
-                      {item.ingredientId === '' && inventoryIngredients.length > 0 && (
+                      {marketItems.length > 1 && (
+                        <div className="flex justify-end border-t border-border/50 pt-1">
+                          <button type="button" aria-label={`Remove item ${index + 1}`} onClick={() => removeMarketItemRow(index)} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive">
+                            <X size={13} /> Remove item
+                          </button>
+                        </div>
+                      )}
+
+                      {item.ingredientId === '' && inventoryIngredients.length > 0 && ['major_ingredient', 'pantry_item'].includes(item.itemType) && (
                         <div className="flex items-center gap-2 pt-1 border-t border-border/50">
                           <span className="text-[10px] text-muted-foreground">Link to catalog ingredient:</span>
                           <select
@@ -3197,6 +3552,19 @@ export function PurchasingPage() {
                 {createMarketRun.isPending ? 'Saving…' : 'Save market trip'}
               </button>
             </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={expenseOpen} onOpenChange={setExpenseOpen}>
+        <DialogContent className="w-[calc(100%-1.5rem)] max-w-md rounded-2xl p-4 sm:p-6">
+          <DialogHeader className="text-left"><DialogTitle className="font-display text-lg font-bold">Record non-inventory expense</DialogTitle><DialogDescription className="text-xs">Use this for gas, packaging, cleaning supplies, and other shop costs. Record ingredients through a purchase or Palengke run so stock and landed cost stay linked.</DialogDescription></DialogHeader>
+          <form onSubmit={submitNonInventoryExpense} className="space-y-3">
+            <label className="block text-xs font-bold text-muted-foreground">Description<input required maxLength={200} value={expenseDetails} onChange={(event) => setExpenseDetails(event.target.value)} placeholder="e.g. LPG refill" className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground" /></label>
+            <div className="grid grid-cols-2 gap-2"><label className="block text-xs font-bold text-muted-foreground">Category<select value={expenseCategory} onChange={(event) => setExpenseCategory(event.target.value as typeof expenseCategory)} className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground"><option value="supplies">Supplies</option><option value="delivery">Transport / delivery</option><option value="other">Other</option></select></label><label className="block text-xs font-bold text-muted-foreground">Date<input required type="date" value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-2 text-sm text-foreground" /></label></div>
+            <label className="block text-xs font-bold text-muted-foreground">Amount paid (₱)<input required type="number" min="0.01" step="0.01" value={expenseAmount} onChange={(event) => setExpenseAmount(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 font-mono-ui text-sm text-foreground" /></label>
+            <label className="block text-xs font-bold text-muted-foreground">Note (optional)<input maxLength={500} value={expenseNotes} onChange={(event) => setExpenseNotes(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground" /></label>
+            <button type="submit" disabled={createExpenseLog.isPending} className="h-10 w-full rounded-xl bg-primary text-xs font-bold text-primary-foreground disabled:opacity-50">{createExpenseLog.isPending ? 'Saving…' : 'Save expense'}</button>
           </form>
         </DialogContent>
       </Dialog>
