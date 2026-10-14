@@ -36,7 +36,6 @@ import {
   X,
 } from 'lucide-react';
 import {
-  ExpenseLogInputCategory,
   InventoryBaseUnit,
   InventoryPurchaseUnit,
   OrderInputPaymentMethod,
@@ -57,7 +56,6 @@ import {
   useGetStoreProfile,
   useUpdateStoreProfile,
   useApproveVoidRequest,
-  useCreateExpenseLog,
   useCreateInventoryIngredient,
   useCreateInventoryReceipt,
   useCreateInventoryAdjustment,
@@ -73,7 +71,6 @@ import {
   useCreateUser,
   useCreateVoidRequest,
   useGetDashboardSummary,
-  useListExpenseLogs,
   useListOrders,
   useListProducts,
   useListRoles,
@@ -269,6 +266,7 @@ function PageHeading({
   action,
   compact = false,
   hideOnMobile = false,
+  hideTextOnMobile = false,
 }: {
   eyebrow: string;
   title: string;
@@ -276,12 +274,13 @@ function PageHeading({
   action?: ReactNode;
   compact?: boolean;
   hideOnMobile?: boolean;
+  hideTextOnMobile?: boolean;
 }) {
   return (
     <div
       className={`${hideOnMobile ? 'hidden md:flex' : 'flex'} flex-col justify-between md:flex-row md:items-end ${compact ? 'mb-4 gap-2 md:mb-7 md:gap-4' : 'mb-7 gap-4'}`}
     >
-      <div className="min-w-0">
+      <div className={`${hideTextOnMobile ? 'hidden md:block' : ''} min-w-0`}>
         <p className={`eyebrow-label text-[11px] font-bold uppercase text-secondary ${compact ? 'mb-1 md:mb-2' : 'mb-2'}`}>{eyebrow}</p>
         <h2
           className={`font-display max-w-[24ch] text-balance font-bold leading-tight tracking-tight ${compact ? 'text-2xl md:text-4xl' : 'text-3xl md:text-4xl'}`}
@@ -2198,10 +2197,30 @@ function ChefIcon() {
   return <Utensils size={23} />;
 }
 
+const inventoryUnitFromMarketUnit = (unit: string): { baseUnit: InventoryBaseUnit; factor: number } | null => {
+  switch (unit) {
+    case 'kg':
+      return { baseUnit: InventoryBaseUnit.g, factor: 1000 };
+    case 'g':
+      return { baseUnit: InventoryBaseUnit.g, factor: 1 };
+    case 'L':
+      return { baseUnit: InventoryBaseUnit.ml, factor: 1000 };
+    case 'ml':
+      return { baseUnit: InventoryBaseUnit.ml, factor: 1 };
+    case 'each':
+      return { baseUnit: InventoryBaseUnit.each, factor: 1 };
+    default:
+      return null;
+  }
+};
+
 export function InventoryPage() {
   const queryClient = useQueryClient();
   const inventoryQuery = useListInventoryIngredients({
     query: { queryKey: getListInventoryIngredientsQueryKey(), staleTime: 30_000 },
+  });
+  const marketRunsQuery = useListMarketRuns({
+    query: { queryKey: getListMarketRunsQueryKey(), staleTime: 30_000 },
   });
   const createInventoryIngredient = useCreateInventoryIngredient();
   const createInventoryReceipt = useCreateInventoryReceipt();
@@ -2209,8 +2228,7 @@ export function InventoryPage() {
   const [ingredientOpen, setIngredientOpen] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [adjustmentTarget, setAdjustmentTarget] = useState<InventoryIngredient | null>(null);
-  const [inventoryName, setInventoryName] = useState('');
-  const [inventoryBaseUnit, setInventoryBaseUnit] = useState<InventoryBaseUnit>('g');
+  const [selectedMarketItemKey, setSelectedMarketItemKey] = useState('');
   const [receiptIngredientId, setReceiptIngredientId] = useState('');
   const [receiptQuantity, setReceiptQuantity] = useState('');
   const [receiptUnit, setReceiptUnit] = useState<InventoryPurchaseUnitType>('kg');
@@ -2222,6 +2240,33 @@ export function InventoryPage() {
   const [adjustmentNotes, setAdjustmentNotes] = useState('');
   const [notice, setNotice] = useNoticeState();
   const inventoryIngredients = inventoryQuery.data ?? [];
+  const existingIngredientByName = new Map(inventoryIngredients.map((ingredient) => [ingredient.name.trim().toLowerCase(), ingredient]));
+  const unlinkedMarketItems = [...(marketRunsQuery.data ?? [])]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .flatMap((run) =>
+      run.items
+        .filter((item) => item.itemType === 'major_ingredient' && !item.ingredientId && inventoryUnitFromMarketUnit(item.unit))
+        .map((item) => ({ run, item, key: `${run.id}:${item.id}` })),
+    )
+    .filter(({ item }) => {
+      const unit = inventoryUnitFromMarketUnit(item.unit);
+      const existing = existingIngredientByName.get(item.name.trim().toLowerCase());
+      return (
+        item.name.trim().length > 0 &&
+        (!existing || (existing.baseUnit === unit?.baseUnit && existing.latestUnitCost === 0))
+      );
+    })
+    .filter((entry, _, entries) => {
+      const index = entries.findIndex(
+        ({ item }) => item.name.trim().toLowerCase() === entry.item.name.trim().toLowerCase(),
+      );
+      return entries.indexOf(entry) === index;
+    });
+  const selectedMarketItem = unlinkedMarketItems.find(({ key }) => key === selectedMarketItemKey);
+  const selectedUnitDetails = selectedMarketItem ? inventoryUnitFromMarketUnit(selectedMarketItem.item.unit) : null;
+  const selectedExistingIngredient = selectedMarketItem
+    ? existingIngredientByName.get(selectedMarketItem.item.name.trim().toLowerCase())
+    : undefined;
   const selectedReceiptIngredient = inventoryIngredients.find((item) => item.id === Number(receiptIngredientId));
   const compatiblePurchaseUnits: InventoryPurchaseUnitType[] =
     selectedReceiptIngredient?.baseUnit === 'g'
@@ -2238,15 +2283,60 @@ export function InventoryPage() {
 
   const submitInventoryIngredient = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    createInventoryIngredient.mutate(
-      { data: { name: inventoryName.trim(), baseUnit: inventoryBaseUnit } },
-      {
-        onSuccess: () => {
-          setInventoryName('');
-          setIngredientOpen(false);
-          invalidateInventory();
-          setNotice({ message: 'Ingredient added to inventory.', tone: 'success' });
+    if (!selectedMarketItem) {
+      setNotice({ message: 'Choose an unlinked Palengke ingredient.', tone: 'error' });
+      return;
+    }
+    const unitDetails = inventoryUnitFromMarketUnit(selectedMarketItem.item.unit);
+    if (!unitDetails) {
+      setNotice({ message: 'The Palengke item uses an unsupported unit.', tone: 'error' });
+      return;
+    }
+    const quantityDelta = selectedMarketItem.item.quantity * unitDetails.factor;
+    const unitCost =
+      (selectedMarketItem.item.baseCost + selectedMarketItem.item.allocatedDeliveryCost) / quantityDelta;
+    if (!Number.isFinite(quantityDelta) || quantityDelta <= 0 || !Number.isFinite(unitCost) || unitCost <= 0) {
+      setNotice({ message: 'The selected Palengke item has invalid quantity or cost data.', tone: 'error' });
+      return;
+    }
+
+    const importMarketStock = (ingredientId: number, isNewIngredient: boolean) => {
+      createInventoryAdjustment.mutate(
+        {
+          data: {
+            ingredientId,
+            quantityDelta,
+            unitCost,
+            notes: `Imported from Palengke Run #${selectedMarketItem.run.id}`,
+          },
         },
+        {
+          onSuccess: () => {
+            setSelectedMarketItemKey('');
+            setIngredientOpen(false);
+            invalidateInventory();
+            setNotice({ message: 'Palengke stock and landed cost added to inventory.', tone: 'success' });
+          },
+          onError: () =>
+            setNotice({
+              message: isNewIngredient
+                ? 'Ingredient was created, but its Palengke stock could not be imported. Record the stock manually.'
+                : 'Could not add the Palengke stock to this ingredient. Check available quantity and try again.',
+              tone: 'error',
+            }),
+        },
+      );
+    };
+
+    if (selectedExistingIngredient) {
+      importMarketStock(selectedExistingIngredient.id, false);
+      return;
+    }
+
+    createInventoryIngredient.mutate(
+      { data: { name: selectedMarketItem.item.name.trim(), baseUnit: unitDetails.baseUnit } },
+      {
+        onSuccess: (created) => importMarketStock(created.id, true),
         onError: () => setNotice({ message: 'Could not add ingredient. It may already exist.', tone: 'error' }),
       },
     );
@@ -2319,17 +2409,18 @@ export function InventoryPage() {
     <div className="animate-rise">
       <PageHeading
         compact
+        hideTextOnMobile
         eyebrow="Stock control"
         title="Ingredient inventory"
         detail="Set up ingredients once, then record purchases and stock changes here."
         action={
-          <div className="flex gap-2">
+          <div className="flex w-full min-w-0 items-center gap-2 md:w-auto">
             <button
               type="button"
               onClick={() => setIngredientOpen(true)}
-              className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-border px-3 text-xs font-bold text-secondary"
+              className="inline-flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-2.5 text-[11px] font-bold text-secondary transition hover:border-secondary sm:h-10 sm:px-3 sm:text-xs md:flex-none"
             >
-              <Plus size={14} /> Add ingredient
+              <Plus size={14} /> <span className="whitespace-nowrap">Add from Palengke</span>
             </button>
             <button
               type="button"
@@ -2338,57 +2429,69 @@ export function InventoryPage() {
                 setReceiptOpen(true);
               }}
               disabled={inventoryIngredients.length === 0}
-              className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-bold text-primary-foreground disabled:opacity-50"
+              className="inline-flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary px-2.5 text-[11px] font-bold text-primary-foreground shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 sm:h-10 sm:px-3 sm:text-xs md:flex-none"
             >
-              <Plus size={14} /> Record stock
+              <Plus size={14} /> <span className="whitespace-nowrap">Record stock</span>
             </button>
           </div>
         }
       />
 
-      <section className="rounded-2xl border border-card-border bg-card px-4 md:px-5">
-        <div className="flex items-center justify-between gap-3 border-b border-border py-3">
-          <div>
-            <h3 className="font-display text-base font-bold">Tracked ingredients</h3>
-            <p className="text-xs text-muted-foreground">{inventoryIngredients.length} ingredients</p>
+      <section className="overflow-hidden rounded-2xl border border-card-border bg-card shadow-sm">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-3 sm:px-5 sm:py-4">
+          <div className="min-w-0">
+            <h3 className="font-display text-base font-bold sm:text-xl">Tracked ingredients</h3>
+            <p className="mt-1 text-[10px] text-muted-foreground sm:text-xs">
+              {inventoryIngredients.length} {inventoryIngredients.length === 1 ? 'ingredient' : 'ingredients'}
+            </p>
           </div>
         </div>
         {inventoryQuery.isLoading ? (
-          <p className="py-6 text-center text-xs text-muted-foreground">Loading inventory…</p>
+          <div className="p-3 sm:p-5">
+            <LoadingBlocks />
+          </div>
         ) : inventoryQuery.isError ? (
-          <div className="py-6 text-center text-xs text-destructive">
-            Could not load ingredient inventory.{' '}
-            <button type="button" onClick={() => void inventoryQuery.refetch()} className="font-bold underline">
+          <div className="p-3 text-xs text-destructive sm:p-5 sm:text-sm">
+            <p className="font-bold">Ingredient inventory could not load.</p>
+            <button
+              type="button"
+              onClick={() => void inventoryQuery.refetch()}
+              className="mt-2 rounded-lg border border-current px-3 py-1.5 text-[10px] font-bold sm:py-2 sm:text-xs"
+            >
               Retry
             </button>
           </div>
         ) : inventoryIngredients.length === 0 ? (
-          <div className="py-8 text-center">
-            <p className="text-sm font-semibold">No ingredients yet</p>
-            <p className="mt-1 text-xs text-muted-foreground">Add each ingredient once, then record its first purchase as stock.</p>
-            <button
-              type="button"
-              onClick={() => setIngredientOpen(true)}
-              className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-bold text-primary-foreground"
-            >
-              <Plus size={14} /> Add first ingredient
-            </button>
+          <div className="p-2 sm:p-5">
+            <EmptyState
+              title="No ingredients yet"
+              detail="Add an ingredient to the inventory, then record its first purchase as stock."
+              icon={ShoppingBasket}
+              compact
+            />
           </div>
         ) : (
           <div className="divide-y divide-border">
             {inventoryIngredients.map((ingredient) => (
-              <div key={ingredient.id} className="flex min-h-12 items-center gap-3 py-2.5">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold">{ingredient.name}</p>
-                  <p className="text-[11px] text-muted-foreground">
+              <article
+                key={ingredient.id}
+                data-testid={`row-inventory-ingredient-${ingredient.id}`}
+                className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 px-3 py-3 sm:gap-4 sm:px-5 sm:py-4"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-bold sm:text-sm">{ingredient.name}</p>
+                  <p className="mt-0.5 text-[10px] text-muted-foreground sm:text-xs">
                     {ingredient.latestUnitCost > 0
                       ? `${money(ingredient.latestUnitCost)} / ${ingredient.baseUnit}`
                       : 'No purchase price yet'}
                   </p>
                 </div>
-                <p className="shrink-0 text-right text-sm font-bold">
-                  {ingredient.quantityAvailable.toLocaleString('en-PH', { maximumFractionDigits: 3 })} {ingredient.baseUnit}
-                </p>
+                <div className="text-right">
+                  <p className="font-mono-ui text-xs font-bold sm:text-sm">
+                    {ingredient.quantityAvailable.toLocaleString('en-PH', { maximumFractionDigits: 3 })}
+                  </p>
+                  <p className="text-[9px] text-muted-foreground sm:text-[10px]">{ingredient.baseUnit} on hand</p>
+                </div>
                 <button
                   type="button"
                   onClick={() => {
@@ -2397,53 +2500,99 @@ export function InventoryPage() {
                     setAdjustmentNotes('');
                     setAdjustmentTarget(ingredient);
                   }}
-                  className="min-h-9 shrink-0 rounded-lg border border-border px-3 text-xs font-semibold text-muted-foreground"
+                  className="inline-flex h-8 shrink-0 items-center rounded-lg border border-border px-2.5 text-[10px] font-bold text-muted-foreground transition hover:border-primary hover:text-foreground sm:h-9 sm:px-3 sm:text-xs"
                 >
                   Adjust
                 </button>
-              </div>
+              </article>
             ))}
           </div>
         )}
       </section>
 
-      <Dialog open={ingredientOpen} onOpenChange={setIngredientOpen}>
+      <Dialog
+        open={ingredientOpen}
+        onOpenChange={(open) => {
+          setIngredientOpen(open);
+          if (!open) setSelectedMarketItemKey('');
+        }}
+      >
         <DialogContent className="w-[calc(100%-1.5rem)] max-w-md rounded-2xl p-4 sm:p-6">
           <DialogHeader className="pr-6 text-left">
-            <DialogTitle className="font-display text-lg font-bold">Add inventory ingredient</DialogTitle>
-            <DialogDescription className="text-xs">Choose the smallest unit used consistently in recipes and stock.</DialogDescription>
+            <DialogTitle className="font-display text-lg font-bold">Add ingredient from Palengke</DialogTitle>
+            <DialogDescription className="text-xs">
+              Choose an unlinked Palengke ingredient to add its stock and landed cost to inventory for costing.
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={submitInventoryIngredient} className="space-y-3">
             <label className="block text-xs font-bold text-muted-foreground">
               Ingredient name
-              <input
-                required
-                maxLength={100}
-                value={inventoryName}
-                onChange={(event) => setInventoryName(event.target.value)}
-                placeholder="e.g. Pork"
-                className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground"
-              />
+              {marketRunsQuery.isLoading ? (
+                <span className="mt-1 block rounded-lg border border-input px-3 py-2.5 text-xs font-normal text-muted-foreground">
+                  Loading Palengke items…
+                </span>
+              ) : marketRunsQuery.isError ? (
+                <span className="mt-1 block rounded-lg border border-destructive/40 px-3 py-2.5 text-xs font-normal text-destructive">
+                  Could not load Palengke items.{' '}
+                  <button type="button" onClick={() => void marketRunsQuery.refetch()} className="font-bold underline">
+                    Retry
+                  </button>
+                </span>
+              ) : unlinkedMarketItems.length > 0 ? (
+                <UiSelect
+                  value={selectedMarketItemKey}
+                  onValueChange={(value) => {
+                    setSelectedMarketItemKey(value);
+                  }}
+                >
+                  <SelectTrigger className="mt-1 h-10 bg-background text-sm">
+                    <SelectValue placeholder="Select a Palengke item" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {unlinkedMarketItems.map(({ run, item, key }) => (
+                      <SelectItem key={key} value={key}>
+                        {item.name} · {item.quantity} {item.unit} · {money(item.baseCost + item.allocatedDeliveryCost)} · {dateLabel(run.createdAt)}
+                        {run.supplier ? ` · ${run.supplier}` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </UiSelect>
+              ) : (
+                <span className="mt-1 block rounded-lg border border-input px-3 py-2.5 text-xs font-normal text-muted-foreground">
+                  No compatible unlinked Palengke ingredients available. Log a market trip with a major ingredient first.
+                </span>
+              )}
             </label>
             <label className="block text-xs font-bold text-muted-foreground">
               Base unit
-              <UiSelect value={inventoryBaseUnit} onValueChange={(value) => setInventoryBaseUnit(value as InventoryBaseUnit)}>
-                <SelectTrigger className="mt-1 h-10 bg-background text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={InventoryBaseUnit.g}>Grams (g)</SelectItem>
-                  <SelectItem value={InventoryBaseUnit.ml}>Milliliters (ml)</SelectItem>
-                  <SelectItem value={InventoryBaseUnit.each}>Each (pcs)</SelectItem>
-                </SelectContent>
-              </UiSelect>
+              <span className="mt-1 block rounded-lg border border-input bg-muted/40 px-3 py-2.5 text-sm text-foreground">
+                {selectedUnitDetails?.baseUnit === InventoryBaseUnit.g
+                  ? 'Grams (g)'
+                  : selectedUnitDetails?.baseUnit === InventoryBaseUnit.ml
+                    ? 'Milliliters (ml)'
+                    : selectedUnitDetails?.baseUnit === InventoryBaseUnit.each
+                      ? 'Each (pcs)'
+                      : 'Select an item to set its unit'}
+              </span>
             </label>
             <button
               type="submit"
-              disabled={createInventoryIngredient.isPending}
+              disabled={
+                createInventoryIngredient.isPending ||
+                createInventoryAdjustment.isPending ||
+                !selectedMarketItem ||
+                inventoryQuery.isLoading ||
+                inventoryQuery.isError ||
+                marketRunsQuery.isLoading ||
+                marketRunsQuery.isError
+              }
               className="h-10 w-full rounded-xl bg-primary text-xs font-bold text-primary-foreground disabled:opacity-50"
             >
-              {createInventoryIngredient.isPending ? 'Adding…' : 'Add ingredient'}
+              {createInventoryIngredient.isPending || createInventoryAdjustment.isPending
+                ? 'Adding stock…'
+                : selectedExistingIngredient
+                  ? 'Add stock to inventory'
+                  : 'Add ingredient & stock'}
             </button>
           </form>
         </DialogContent>
@@ -2612,12 +2761,26 @@ export function InventoryPage() {
   );
 }
 
+type MarketItemDraft = {
+  ingredientId: string;
+  itemType: 'major_ingredient' | 'pantry_item' | 'utility_lpg' | 'other_expense';
+  name: string;
+  quantity: string;
+  unit: InventoryPurchaseUnitType;
+  totalCost: string;
+};
+
+const newMarketItemDraft = (): MarketItemDraft => ({
+  ingredientId: '',
+  itemType: 'major_ingredient',
+  name: '',
+  quantity: '',
+  unit: 'kg',
+  totalCost: '',
+});
+
 export function PurchasingPage() {
   const queryClient = useQueryClient();
-  const expensesQuery = useListExpenseLogs({
-    query: { queryKey: getListExpenseLogsQueryKey(), staleTime: 30_000 },
-  });
-  const createExpense = useCreateExpenseLog();
   const inventoryQuery = useListInventoryIngredients({
     query: { queryKey: getListInventoryIngredientsQueryKey(), staleTime: 30_000 },
   });
@@ -2626,38 +2789,19 @@ export function PurchasingPage() {
   });
   const createMarketRun = useCreateMarketRun();
   const [marketRunOpen, setMarketRunOpen] = useState(false);
+  const [marketSearch, setMarketSearch] = useState('');
   const [marketSupplier, setMarketSupplier] = useState('');
   const [marketDeliveryFee, setMarketDeliveryFee] = useState('');
   const [marketNotes, setMarketNotes] = useState('');
-  const [marketItems, setMarketItems] = useState<Array<{
-    ingredientId: string;
-    itemType: 'major_ingredient' | 'pantry_item' | 'utility_lpg' | 'other_expense';
-    name: string;
-    quantity: string;
-    unit: InventoryPurchaseUnitType;
-    totalCost: string;
-  }>>([
-    { ingredientId: '', itemType: 'major_ingredient', name: '', quantity: '', unit: 'kg', totalCost: '' },
-  ]);
-  const [amount, setAmount] = useState('');
-  const [details, setDetails] = useState('');
-  const [supplier, setSupplier] = useState('');
-  const [notes, setNotes] = useState('');
-  const [category, setCategory] = useState<keyof typeof ExpenseLogInputCategory>('ingredients');
-  const [addExpenseOpen, setAddExpenseOpen] = useState(false);
+  const [marketItems, setMarketItems] = useState<MarketItemDraft[]>([newMarketItemDraft()]);
   const [notice, setNotice] = useNoticeState();
-  const expenses = expensesQuery.data ?? [];
   const inventoryIngredients = inventoryQuery.data ?? [];
   const marketRuns = marketRunsQuery.data ?? [];
-  const expenseTotal = expenses.reduce((total, expense) => total + expense.amount, 0);
-
-  const resetExpenseForm = () => {
-    setAmount('');
-    setDetails('');
-    setSupplier('');
-    setNotes('');
-    setCategory('ingredients');
-  };
+  const filteredMarketRuns = marketRuns.filter((run) =>
+    `${run.id} ${run.supplier ?? ''} ${run.notes ?? ''} ${run.items.map((item) => item.name).join(' ')}`
+      .toLowerCase()
+      .includes(marketSearch.trim().toLowerCase()),
+  );
 
   const invalidateInventory = () => {
     void queryClient.invalidateQueries({ queryKey: getListInventoryIngredientsQueryKey() });
@@ -2667,10 +2811,7 @@ export function PurchasingPage() {
   };
 
   const addMarketItemRow = () => {
-    setMarketItems((current) => [
-      ...current,
-      { ingredientId: '', itemType: 'major_ingredient', name: '', quantity: '', unit: 'kg', totalCost: '' },
-    ]);
+    setMarketItems((current) => [...current, newMarketItemDraft()]);
   };
 
   const removeMarketItemRow = (index: number) => {
@@ -2678,19 +2819,11 @@ export function PurchasingPage() {
     setMarketItems((current) => current.filter((_, i) => i !== index));
   };
 
-  const updateMarketItemRow = (index: number, field: string, value: string) => {
+  const updateMarketItemRow = (index: number, updates: Partial<MarketItemDraft>) => {
     setMarketItems((current) =>
       current.map((row, i) => {
         if (i !== index) return row;
-        const updated = { ...row, [field]: value };
-        if (field === 'ingredientId' && value) {
-          const ing = inventoryIngredients.find((item) => item.id === Number(value));
-          if (ing) {
-            updated.name = ing.name;
-            updated.unit = ing.baseUnit === 'g' ? 'kg' : ing.baseUnit === 'ml' ? 'L' : 'each';
-          }
-        }
-        return updated;
+        return { ...row, ...updates };
       }),
     );
   };
@@ -2727,7 +2860,7 @@ export function PurchasingPage() {
           setMarketSupplier('');
           setMarketDeliveryFee('');
           setMarketNotes('');
-          setMarketItems([{ ingredientId: '', itemType: 'major_ingredient', name: '', quantity: '', unit: 'kg', totalCost: '' }]);
+          setMarketItems([newMarketItemDraft()]);
           invalidateInventory();
           setNotice({ message: 'Palengke Market Run logged! Landed costs prorated & stock updated.', tone: 'success' });
         },
@@ -2743,175 +2876,105 @@ export function PurchasingPage() {
   const marketItemsTotal = marketItems.reduce((sum, item) => sum + (Number(item.totalCost) || 0), 0);
   const marketGrandTotal = marketItemsTotal + marketDeliveryFeeNum;
 
-  const submitExpense = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const numericAmount = Number(amount);
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0 || !details.trim()) {
-      setNotice({
-        message: 'Enter an amount greater than zero and what it was for.',
-        tone: 'error',
-      });
-      return;
-    }
-    createExpense.mutate(
-      {
-        data: {
-          amount: numericAmount,
-          details: details.trim(),
-          category: ExpenseLogInputCategory[category],
-          supplier: supplier.trim() || null,
-          notes: notes.trim() || null,
-        },
-      },
-      {
-        onSuccess: () => {
-          resetExpenseForm();
-          setAddExpenseOpen(false);
-          void queryClient.invalidateQueries({
-            queryKey: getListExpenseLogsQueryKey(),
-          });
-          setNotice({
-            message: 'Palengke expense added to today’s books.',
-            tone: 'success',
-          });
-        },
-        onError: () =>
-          setNotice({
-            message: 'Could not save the expense. Try again.',
-            tone: 'error',
-          }),
-      },
-    );
-  };
-
   return (
     <div className="animate-rise">
       <PageHeading
-        hideOnMobile
         compact
-        eyebrow="Purchases & expenses"
-        title="Palengke"
-        detail="Log market trips and review recorded expenses."
+        hideTextOnMobile
+        eyebrow="Purchasing history · Recent first"
+        title="Market trips"
+        detail="Review market purchases, landed costs, and delivery fares."
+        action={
+          <div className="flex w-full min-w-0 items-center gap-2 md:w-auto">
+            <div className="relative min-w-0 flex-1 md:w-56 md:flex-none">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                data-testid="input-market-run-search"
+                value={marketSearch}
+                onChange={(event) => setMarketSearch(event.target.value)}
+                placeholder="Search trips…"
+                aria-label="Search market trips"
+                className="h-9 w-full rounded-xl border border-border bg-card pl-9 pr-3 text-xs outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 md:h-10 sm:text-sm"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setMarketRunOpen(true)}
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-primary px-3 text-xs font-bold text-primary-foreground shadow-sm transition hover:brightness-95 md:h-10 sm:px-4"
+            >
+              <Plus size={14} /> <span className="whitespace-nowrap">Log Palengke Run</span>
+            </button>
+          </div>
+        }
       />
-      <section className="mb-4 rounded-none border-0 bg-transparent p-0 shadow-none md:mb-6 md:rounded-2xl md:border md:border-card-border md:bg-card md:p-5 md:shadow-sm">
-        <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
-          <div className="min-w-0">
-            <h3 className="font-display text-lg font-bold sm:text-xl">Market trips</h3>
-            <p className="mt-0.5 text-[10px] text-muted-foreground sm:text-xs">
-              Bulk purchases with delivery costs allocated across ingredients.
-            </p>
-          </div>
+      {marketRunsQuery.isLoading ? (
+        <LoadingBlocks />
+      ) : marketRunsQuery.isError ? (
+        <div className="rounded-2xl border border-[#e6b2a9] bg-[#fff0ed] p-4 text-xs text-[#9e382c] sm:p-6 sm:text-sm">
+          <p className="font-bold">Market trips could not load.</p>
           <button
             type="button"
-            onClick={() => setMarketRunOpen(true)}
-            className="inline-flex h-9 shrink-0 items-center gap-1 rounded-lg bg-emerald-600 px-3 text-xs font-bold text-white hover:bg-emerald-700"
+            onClick={() => void marketRunsQuery.refetch()}
+            className="mt-2 rounded-lg border border-current px-3 py-1.5 text-[10px] font-bold sm:py-2 sm:text-xs"
           >
-            <Plus size={14} /> Log Palengke Run
+            Try again
           </button>
         </div>
-        {marketRunsQuery.isLoading ? (
-          <p className="py-4 text-center text-xs text-muted-foreground">Loading market runs…</p>
-        ) : marketRunsQuery.isError ? (
-          <div className="py-5 text-center text-xs">
-            <p className="text-destructive">Could not load market trips.</p>
-            <button type="button" onClick={() => void marketRunsQuery.refetch()} className="mt-2 font-bold underline underline-offset-2">
-              Try again
-            </button>
-          </div>
-        ) : marketRuns.length === 0 ? (
-          <p className="py-5 text-center text-xs text-muted-foreground">No market trips recorded yet.</p>
-        ) : (
-          <div className="divide-y divide-border">
-            {marketRuns.map((run) => (
-              <div key={run.id} className="py-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <p className="text-xs font-bold text-foreground">
-                      {run.supplier ? `Supplier: ${run.supplier}` : `Market Run #${run.id}`} · {run.items.length} items
-                    </p>
-                    <p className="mt-0.5 text-[10px] text-muted-foreground">
-                      {new Date(run.createdAt).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}
-                      {run.deliveryFee > 0 && ` · Prorated Delivery Fare: ${money(run.deliveryFee)}`}
-                    </p>
-                  </div>
-                  <strong className="font-mono-ui text-sm font-extrabold text-foreground">{money(run.totalAmount)}</strong>
-                </div>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {run.items.map((item) => (
-                    <span key={item.id} className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                      <span className="font-semibold text-foreground">{item.name}</span> ({item.quantity} {item.unit}): {money(item.baseCost)}
-                      {item.allocatedDeliveryCost > 0 && <span className="font-medium text-emerald-600"> (+{money(item.allocatedDeliveryCost)} fare)</span>}
-                    </span>
-                  ))}
-                </div>
+      ) : marketRuns.length === 0 ? (
+        <div className="rounded-2xl border border-card-border bg-card p-3 shadow-sm sm:p-5">
+          <EmptyState title="No market trips yet" detail="Log a Palengke run to keep purchases and landed costs together." icon={ShoppingBag} compact />
+        </div>
+      ) : filteredMarketRuns.length === 0 ? (
+        <div className="rounded-2xl border border-card-border bg-card p-3 shadow-sm sm:p-5">
+          <EmptyState title="No trips match" detail="Try another supplier or item name." icon={Search} compact />
+        </div>
+      ) : (
+        <div aria-label="Recent market trips" className="space-y-2.5 sm:space-y-3">
+          {filteredMarketRuns.map((run) => (
+            <article
+              key={run.id}
+              data-testid={`card-market-run-${run.id}`}
+              className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 rounded-2xl border border-card-border bg-card p-3 shadow-sm sm:gap-x-4 sm:p-4"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-xs font-bold sm:text-sm">
+                  {run.supplier ? `Supplier: ${run.supplier}` : `Market Run #${run.id}`}
+                  <span className="font-medium text-muted-foreground"> · {run.items.length} {run.items.length === 1 ? 'item' : 'items'}</span>
+                </p>
+                <p className="mt-1 text-[10px] text-muted-foreground sm:text-xs">
+                  {dateLabel(run.createdAt)} · {time(run.createdAt)}
+                  {run.deliveryFee > 0 && <> · Delivery fare {money(run.deliveryFee)}</>}
+                </p>
               </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="rounded-none border-0 bg-transparent p-0 shadow-none md:rounded-2xl md:border md:border-card-border md:bg-card md:p-5 md:shadow-sm">
-        <div className="flex items-center justify-between gap-3 border-b border-border pb-3 md:pb-4">
-          <div className="min-w-0">
-            <h3 className="font-display text-lg font-bold sm:text-xl">Expenses</h3>
-            <p className="mt-0.5 text-[10px] text-muted-foreground sm:text-xs">
-              {expenses.length} recent · {money(expenseTotal)} total
-            </p>
-          </div>
-          <button
-            type="button"
-            data-testid="button-open-add-expense"
-            onClick={() => setAddExpenseOpen(true)}
-            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-bold text-primary-foreground"
-          >
-            <Plus size={14} /> Add expense
-          </button>
+              <strong className="row-span-2 self-start whitespace-nowrap font-mono-ui text-xs font-bold sm:text-sm">
+                {money(run.totalAmount)}
+              </strong>
+              <div className="col-span-1 flex flex-wrap gap-1.5 pr-1">
+                {run.items.map((item) => (
+                  <span key={item.id} className="inline-flex max-w-full flex-wrap items-center gap-x-1 rounded-full bg-muted px-2.5 py-1 text-[9px] text-muted-foreground sm:text-[10px]">
+                    <span className="font-bold text-foreground">{item.name}</span>
+                    <span>({item.quantity} {item.unit}) · {money(item.baseCost)}</span>
+                    {item.allocatedDeliveryCost > 0 && (
+                      <span className="font-semibold text-secondary">+{money(item.allocatedDeliveryCost)} fare</span>
+                    )}
+                  </span>
+                ))}
+              </div>
+              {run.notes && (
+                <p className="col-span-1 text-[10px] text-muted-foreground sm:text-xs">
+                  Note: {run.notes}
+                </p>
+              )}
+            </article>
+          ))}
         </div>
-        {expensesQuery.isLoading ? (
-          <p className="py-5 text-center text-xs text-muted-foreground">Loading expenses…</p>
-        ) : expensesQuery.isError ? (
-          <div className="py-5 text-center text-xs">
-            <p className="text-destructive">Could not load expenses.</p>
-            <button type="button" onClick={() => void expensesQuery.refetch()} className="mt-2 font-bold underline underline-offset-2">
-              Try again
-            </button>
-          </div>
-        ) : expenses.length === 0 ? (
-          <p className="py-8 text-center text-xs text-muted-foreground">
-            No expenses yet. Add your first purchase to start the expense trail.
-          </p>
-        ) : (
-          <div className="max-h-[min(65dvh,720px)] divide-y divide-border overflow-y-auto touch-pan-y">
-            {expenses.map((expense) => (
-              <article key={expense.id} data-testid={`card-expense-${expense.id}`} className="flex items-center justify-between gap-3 py-3">
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-semibold sm:text-sm">{expense.details}</p>
-                  <p className="mt-1 text-[10px] text-muted-foreground sm:text-xs">
-                    {[
-                      expense.category,
-                      expense.supplier,
-                      new Date(expense.createdAt).toLocaleString('en-PH', {
-                        dateStyle: 'medium',
-                        timeStyle: 'short',
-                      }),
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </p>
-                  {expense.notes && <p className="mt-1 truncate text-[10px] text-muted-foreground sm:text-xs">{expense.notes}</p>}
-                </div>
-                <p className="shrink-0 font-mono-ui text-xs font-bold sm:text-sm">{money(expense.amount)}</p>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
+      )}
 
       <Dialog open={marketRunOpen} onOpenChange={setMarketRunOpen}>
         <DialogContent className="w-[calc(100%-1.5rem)] max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl p-4 sm:p-6">
           <DialogHeader className="pr-6 text-left">
             <DialogTitle className="font-display text-lg font-bold flex items-center gap-2">
-              <ShoppingBag className="text-emerald-600" size={20} /> Log Palengke / Bulk Market Run
+              <ShoppingBag className="text-secondary" size={20} /> Log market trip
             </DialogTitle>
             <DialogDescription className="text-xs">
               Record a batch market trip. Delivery fare will be prorated automatically across major ingredients to calculate accurate landed costs per dish.
@@ -2973,7 +3036,7 @@ export function PurchasingPage() {
                           <label className="mb-1 block text-[9px] font-bold text-muted-foreground">Item Name / Ingredient</label>
                           <input
                             value={item.name}
-                            onChange={(e) => updateMarketItemRow(index, 'name', e.target.value)}
+                            onChange={(e) => updateMarketItemRow(index, { name: e.target.value })}
                             placeholder="e.g. Pork Belly, Cooking Oil, LPG"
                             required
                             className="h-9 w-full rounded-lg border border-input bg-card px-2.5 text-xs outline-none focus:border-primary"
@@ -2984,7 +3047,7 @@ export function PurchasingPage() {
                           <label className="mb-1 block text-[9px] font-bold text-muted-foreground">Category</label>
                           <select
                             value={item.itemType}
-                            onChange={(e) => updateMarketItemRow(index, 'itemType', e.target.value)}
+                            onChange={(e) => updateMarketItemRow(index, { itemType: e.target.value as MarketItemDraft['itemType'] })}
                             className="h-9 w-full rounded-lg border border-input bg-card px-2 text-xs outline-none focus:border-primary"
                           >
                             <option value="major_ingredient">Major Ingredient</option>
@@ -3002,14 +3065,14 @@ export function PurchasingPage() {
                               min="0.001"
                               step="any"
                               value={item.quantity}
-                              onChange={(e) => updateMarketItemRow(index, 'quantity', e.target.value)}
+                              onChange={(e) => updateMarketItemRow(index, { quantity: e.target.value })}
                               placeholder="Qty"
                               required
                               className="h-9 w-full min-w-0 rounded-lg border border-input bg-card px-2 text-xs font-mono-ui outline-none focus:border-primary"
                             />
                             <select
                               value={item.unit}
-                              onChange={(e) => updateMarketItemRow(index, 'unit', e.target.value as InventoryPurchaseUnitType)}
+                              onChange={(e) => updateMarketItemRow(index, { unit: e.target.value as InventoryPurchaseUnitType })}
                               className="h-9 rounded-lg border border-input bg-card px-1 text-xs outline-none focus:border-primary"
                             >
                               <option value="kg">kg</option>
@@ -3028,7 +3091,7 @@ export function PurchasingPage() {
                             min="0.01"
                             step="0.01"
                             value={item.totalCost}
-                            onChange={(e) => updateMarketItemRow(index, 'totalCost', e.target.value)}
+                            onChange={(e) => updateMarketItemRow(index, { totalCost: e.target.value })}
                             placeholder="0.00"
                             required
                             className="h-9 w-full rounded-lg border border-input bg-card px-2 text-xs font-mono-ui outline-none focus:border-primary"
@@ -3039,8 +3102,9 @@ export function PurchasingPage() {
                           {marketItems.length > 1 && (
                             <button
                               type="button"
+                              aria-label={`Remove item ${index + 1}`}
                               onClick={() => removeMarketItemRow(index)}
-                              className="p-1 text-muted-foreground hover:text-destructive"
+                              className="rounded-lg p-1.5 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"
                             >
                               <X size={16} />
                             </button>
@@ -3053,7 +3117,19 @@ export function PurchasingPage() {
                           <span className="text-[10px] text-muted-foreground">Link to catalog ingredient:</span>
                           <select
                             value={item.ingredientId}
-                            onChange={(e) => updateMarketItemRow(index, 'ingredientId', e.target.value)}
+                            onChange={(e) => {
+                              const ingredientId = e.target.value;
+                              const ingredient = inventoryIngredients.find((candidate) => candidate.id === Number(ingredientId));
+                              updateMarketItemRow(index, {
+                                ingredientId,
+                                ...(ingredient
+                                  ? {
+                                      name: ingredient.name,
+                                      unit: ingredient.baseUnit === 'g' ? 'kg' : ingredient.baseUnit === 'ml' ? 'L' : 'each',
+                                    }
+                                  : {}),
+                              });
+                            }}
                             className="h-7 rounded border border-input bg-card px-2 text-[10px] outline-none"
                           >
                             <option value="">-- Match existing ingredient --</option>
@@ -3067,8 +3143,8 @@ export function PurchasingPage() {
                       )}
 
                       {itemShare > 0 && (
-                        <p className="text-[10px] font-semibold text-emerald-600">
-                          💡 Prorated Delivery Fare Share: +{money(itemShare)} $\rightarrow$ Total Landed Cost: {money(landedTotal)}
+                        <p className="border-t border-border/50 pt-2 text-[10px] font-semibold text-secondary">
+                          Delivery share +{money(itemShare)} · Landed cost {money(landedTotal)}
                         </p>
                       )}
                     </div>
@@ -3088,11 +3164,20 @@ export function PurchasingPage() {
               />
             </div>
 
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs space-y-1">
-              <div className="flex justify-between font-semibold text-foreground">
-                <span>Items Cost Total: {money(marketItemsTotal)}</span>
-                <span>Delivery / Fare: {money(marketDeliveryFeeNum)}</span>
-                <span className="font-extrabold text-emerald-700 dark:text-emerald-400">Grand Total: {money(marketGrandTotal)}</span>
+            <div className="rounded-xl border border-border bg-muted/30 p-3">
+              <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-3">
+                <div>
+                  <p className="text-[10px] font-semibold text-muted-foreground">Items subtotal</p>
+                  <p className="mt-1 font-mono-ui font-bold text-foreground">{money(marketItemsTotal)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold text-muted-foreground">Delivery fare</p>
+                  <p className="mt-1 font-mono-ui font-bold text-foreground">{money(marketDeliveryFeeNum)}</p>
+                </div>
+                <div className="col-span-2 border-t border-border pt-2 sm:col-span-1 sm:border-l sm:border-t-0 sm:pl-3 sm:pt-0">
+                  <p className="text-[10px] font-semibold text-muted-foreground">Trip total</p>
+                  <p className="mt-1 font-mono-ui text-sm font-extrabold text-foreground">{money(marketGrandTotal)}</p>
+                </div>
               </div>
             </div>
 
@@ -3107,116 +3192,15 @@ export function PurchasingPage() {
               <button
                 type="submit"
                 disabled={createMarketRun.isPending}
-                className="h-10 rounded-xl bg-emerald-600 px-5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+                className="h-10 rounded-xl bg-primary px-5 text-xs font-bold text-primary-foreground hover:brightness-95 disabled:opacity-50"
               >
-                {createMarketRun.isPending ? 'Saving Palengke Run…' : 'Save & Post Market Run'}
+                {createMarketRun.isPending ? 'Saving…' : 'Save market trip'}
               </button>
             </div>
           </form>
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={addExpenseOpen}
-        onOpenChange={(open) => {
-          setAddExpenseOpen(open);
-          if (!open) resetExpenseForm();
-        }}
-      >
-        <DialogContent className="w-[calc(100%-1.5rem)] max-w-md rounded-2xl p-4 sm:p-6">
-          <DialogHeader className="pr-6 text-left">
-            <DialogTitle className="font-display text-lg font-bold">New expense</DialogTitle>
-            <DialogDescription className="text-xs">Record what you bought and how much it cost.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={submitExpense} className="space-y-3">
-            <div>
-              <label htmlFor="expense-amount" className="mb-1 block text-[10px] font-bold text-muted-foreground">
-                Amount
-              </label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono-ui text-sm text-muted-foreground">₱</span>
-                <input
-                  id="expense-amount"
-                  data-testid="input-expense-amount"
-                  value={amount}
-                  onChange={(event) => setAmount(event.target.value)}
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  placeholder="0.00"
-                  required
-                  className="h-10 w-full rounded-xl border border-input bg-card pl-8 pr-3 font-mono-ui text-sm outline-none focus:border-primary"
-                />
-              </div>
-            </div>
-            <div>
-              <label htmlFor="expense-details" className="mb-1 block text-[10px] font-bold text-muted-foreground">
-                What did you buy?
-              </label>
-              <input
-                id="expense-details"
-                data-testid="input-expense-details"
-                value={details}
-                onChange={(event) => setDetails(event.target.value)}
-                placeholder="e.g. 2kg pork, tomatoes, gas…"
-                required
-                className="h-10 w-full rounded-xl border border-input bg-card px-3 text-xs outline-none focus:border-primary"
-              />
-            </div>
-            <div>
-              <label htmlFor="expense-supplier" className="mb-1 block text-[10px] font-bold text-muted-foreground">
-                Supplier (optional)
-              </label>
-              <input
-                id="expense-supplier"
-                value={supplier}
-                onChange={(event) => setSupplier(event.target.value)}
-                maxLength={120}
-                className="h-10 w-full rounded-xl border border-input bg-card px-3 text-xs outline-none focus:border-primary"
-              />
-            </div>
-            <div>
-              <label htmlFor="expense-notes" className="mb-1 block text-[10px] font-bold text-muted-foreground">
-                Notes (optional)
-              </label>
-              <textarea
-                id="expense-notes"
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-                maxLength={500}
-                rows={2}
-                className="w-full rounded-xl border border-input bg-card px-3 py-2 text-xs outline-none focus:border-primary"
-              />
-            </div>
-            <fieldset>
-              <legend className="mb-1 text-[10px] font-bold text-muted-foreground">Category</legend>
-              <div className="grid grid-cols-2 gap-2">
-                {(['ingredients', 'supplies', 'delivery', 'other'] as const).map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    data-testid={`button-expense-category-${item}`}
-                    onClick={() => setCategory(item)}
-                    aria-pressed={category === item}
-                    className={`rounded-lg border py-2 text-[10px] font-bold capitalize ${category === item ? 'border-secondary bg-secondary text-secondary-foreground' : 'border-border bg-card text-muted-foreground'}`}
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
-            </fieldset>
-            <button
-              type="submit"
-              data-testid="button-save-expense"
-              disabled={createExpense.isPending}
-              className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-primary text-xs font-extrabold text-primary-foreground disabled:opacity-50"
-            >
-              {createExpense.isPending ? 'Saving…' : 'Add expense'}
-              <ArrowUpRight size={16} />
-            </button>
-          </form>
-        </DialogContent>
-      </Dialog>
       {notice && <Notice {...notice} onClose={() => setNotice(null)} />}
     </div>
   );
@@ -3544,7 +3528,7 @@ export function CostingPage() {
                       onClick={openAddIngredientForm}
                       className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg bg-secondary/10 px-3 text-xs font-bold text-secondary"
                     >
-                      <Plus size={14} /> Add ingredient
+                      <Plus size={14} /> Add to recipe
                     </button>
                   </div>
                   <div className="mb-3 rounded-xl border border-border bg-muted/30 px-3 py-2.5 sm:mb-4 sm:px-4">
@@ -3786,7 +3770,7 @@ export function CostingPage() {
         >
           <SheetHeader className="mb-2 pr-8 text-left sm:mb-3">
             <SheetTitle className="font-display text-lg font-bold sm:text-xl">
-              {ingredientFormMode === 'edit' ? 'Edit ingredient' : 'Add ingredient'}
+              {ingredientFormMode === 'edit' ? 'Edit recipe ingredient' : 'Add recipe ingredient'}
             </SheetTitle>
             <SheetDescription className="text-[11px] sm:text-xs">
               Enter the amount used per serving and the ingredient cost per unit.
@@ -3803,7 +3787,7 @@ export function CostingPage() {
             </div>
           ) : inventoryIngredients.length === 0 ? (
             <p className="rounded-xl border border-dashed border-border p-3 text-xs text-muted-foreground">
-              Add an ingredient in Purchasing before linking it to this recipe.
+              Add an ingredient from a Palengke trip in Inventory before linking it to this recipe.
             </p>
           ) : (
             <form onSubmit={saveIngredientDraft} className="space-y-2 sm:space-y-2.5">
@@ -3878,7 +3862,7 @@ export function CostingPage() {
                   className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-xs font-bold text-primary-foreground"
                 >
                   <Check size={14} />
-                  {ingredientFormMode === 'edit' ? 'Update ingredient' : 'Add ingredient'}
+                  {ingredientFormMode === 'edit' ? 'Update recipe ingredient' : 'Add to recipe'}
                 </button>
               </div>
             </form>
